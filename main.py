@@ -7,9 +7,9 @@ Combines ping, tracert, iperf3 bandwidth testing, and WiFi analysis
 into a unified TUI dashboard.
 
 Usage:
-    python main.py --target 8.8.8.8 --iperf-server 192.168.1.100
-    python main.py --target baidu.com --iperf-server 10.0.0.1 --iperf-port 5201
-    python main.py --target 8.8.8.8  (skip iperf if no server specified)
+    python main.py                         (use default IP 10.216.65.91 for all)
+    python main.py --target 192.168.1.1    (unified IP for ping/tracert/iperf)
+    python main.py --target 10.216.65.91 --iperf-server 192.168.1.100  (separate IPs)
 
 Requirements:
     pip install rich
@@ -31,18 +31,19 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples:
-  python main.py --target 8.8.8.8
-  python main.py --target baidu.com --iperf-server 192.168.1.100
-  python main.py --target 8.8.8.8 --iperf-server 10.0.0.1 --iperf-port 5201 --iperf-proto udp
-  python main.py --no-wifi --target 8.8.8.8
+  python main.py                                (default: 10.216.65.91 for all)
+  python main.py --target 192.168.1.1           (unified IP for ping/tracert/iperf)
+  python main.py --target 10.216.65.91 --iperf-server 192.168.1.100  (separate IPs)
+  python main.py --target 10.216.65.91 --iperf-port 5201 --iperf-proto udp
+  python main.py --no-wifi --target 10.216.65.91
 """,
     )
 
     # Ping / Tracert
     parser.add_argument(
         "--target", "-t",
-        default="8.8.8.8",
-        help="Target host for ping and tracert (default: 8.8.8.8)",
+        default="10.216.65.91",
+        help="Target host for ping, tracert, and iperf (default: 10.216.65.91)",
     )
     parser.add_argument(
         "--ping-count", "-n",
@@ -55,7 +56,7 @@ Examples:
     parser.add_argument(
         "--iperf-server", "-s",
         default=None,
-        help="iperf3 server address (skip iperf if not specified)",
+        help="iperf3 server address (default: same as --target)",
     )
     parser.add_argument(
         "--iperf-port",
@@ -80,6 +81,11 @@ Examples:
         default="100M",
         help="iperf3 UDP target bandwidth (default: 100M, only for UDP)",
     )
+    parser.add_argument(
+        "--no-iperf",
+        action="store_true",
+        help="Skip iperf3 bandwidth test",
+    )
 
     # WiFi
     parser.add_argument(
@@ -99,7 +105,13 @@ Examples:
         help="Skip WiFi disconnect/reconnect test",
     )
 
-    return parser.parse_args()
+    args = parser.parse_args()
+
+    # Unified IP: if iperf-server not specified, use same IP as target
+    if args.iperf_server is None:
+        args.iperf_server = args.target
+
+    return args
 
 
 def main():
@@ -108,7 +120,7 @@ def main():
     print("\n  WiFi Network Diagnostics Tool")
     print("  ==============================")
     print(f"  Target:       {args.target}")
-    if args.iperf_server:
+    if not args.no_iperf:
         print(f"  iperf3:       {args.iperf_server}:{args.iperf_port} ({args.iperf_proto.upper()})")
     print(f"  WiFi scan:    {'disabled' if args.no_wifi else f'{args.wifi_scans} rounds'}")
     print()
@@ -119,7 +131,7 @@ def main():
     ping_tracer = PingTracer(target=args.target, ping_count=args.ping_count)
 
     iperf_tester = None
-    if args.iperf_server:
+    if not args.no_iperf:
         iperf_tester = IperfTester(
             server=args.iperf_server,
             port=args.iperf_port,
