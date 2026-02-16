@@ -51,6 +51,18 @@ Examples:
         default=50,
         help="Number of ping packets (default: 50)",
     )
+    parser.add_argument(
+        "--tracert-max-hops",
+        type=int,
+        default=15,
+        help="Max hops for tracert (default: 15)",
+    )
+    parser.add_argument(
+        "--tracert-timeout",
+        type=int,
+        default=30,
+        help="Overall tracert timeout in seconds (default: 30)",
+    )
 
     # iperf3
     parser.add_argument(
@@ -128,7 +140,12 @@ def main():
     time.sleep(2)
 
     # Initialize modules
-    ping_tracer = PingTracer(target=args.target, ping_count=args.ping_count)
+    ping_tracer = PingTracer(
+        target=args.target,
+        ping_count=args.ping_count,
+        tracert_max_hops=args.tracert_max_hops,
+        tracert_max_seconds=args.tracert_timeout,
+    )
 
     iperf_tester = None
     if not args.no_iperf:

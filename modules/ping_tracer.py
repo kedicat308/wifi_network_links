@@ -53,9 +53,14 @@ class TracertStats:
 class PingTracer:
     """Runs ping and tracert commands and parses output."""
 
-    def __init__(self, target: str, ping_count: int = 50):
+    def __init__(self, target: str, ping_count: int = 50,
+                 tracert_max_hops: int = 15, tracert_timeout_ms: int = 1000,
+                 tracert_max_seconds: int = 30):
         self.target = target
         self.ping_count = ping_count
+        self.tracert_max_hops = tracert_max_hops
+        self.tracert_timeout_ms = tracert_timeout_ms
+        self.tracert_max_seconds = tracert_max_seconds
         self.ping_stats = PingStats(target=target)
         self.tracert_stats = TracertStats(target=target)
         self._ping_thread = None
@@ -146,7 +151,12 @@ class PingTracer:
 
     def _run_tracert(self):
         try:
-            cmd = ["tracert", "-d", "-w", "3000", self.target]
+            cmd = [
+                "tracert", "-d",
+                "-w", str(self.tracert_timeout_ms),
+                "-h", str(self.tracert_max_hops),
+                self.target,
+            ]
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -166,9 +176,18 @@ class PingTracer:
                 r"([\d.]+|(?:请求超时|Request timed out))"
             )
 
+            start_time = time.time()
             for line in proc.stdout:
                 if self._stop_event.is_set():
                     proc.kill()
+                    break
+
+                # Overall timeout guard
+                if time.time() - start_time > self.tracert_max_seconds:
+                    proc.kill()
+                    self.tracert_stats.error = (
+                        f"Tracert timed out after {self.tracert_max_seconds}s"
+                    )
                     break
 
                 line = line.strip()
@@ -195,10 +214,14 @@ class PingTracer:
                     )
                     self.tracert_stats.hops.append(hop)
 
-            proc.wait()
+            proc.wait(timeout=5)
             self.tracert_stats.done = True
         except FileNotFoundError:
             self.tracert_stats.error = "tracert command not found"
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            self.tracert_stats.error = "tracert process did not exit cleanly"
+            self.tracert_stats.done = True
         except Exception as e:
             self.tracert_stats.error = str(e)
         finally:

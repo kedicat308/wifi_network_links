@@ -365,10 +365,10 @@ class Dashboard:
                     time.sleep(refresh_rate)
 
                     # Check if all tasks are done
+                    # Note: tracert is non-blocking for exit — it may be very slow
+                    # and should not hold up the entire program
                     all_done = True
                     if self.ping_tracer and self.ping_tracer.ping_stats.running:
-                        all_done = False
-                    if self.ping_tracer and self.ping_tracer.tracert_stats.running:
                         all_done = False
                     if self.iperf_tester and self.iperf_tester.stats.running:
                         all_done = False
