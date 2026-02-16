@@ -3,6 +3,7 @@
 import subprocess
 import json
 import os
+import time
 import threading
 from dataclasses import dataclass, field
 
@@ -102,6 +103,14 @@ class IperfTester:
             if self._stop_event.is_set():
                 return
 
+            # iperf3 server only handles one client at a time and needs a
+            # cooldown between sessions; connect immediately → "connection refused"
+            self.stats.current_phase = "waiting"
+            for _ in range(3):
+                if self._stop_event.is_set():
+                    return
+                time.sleep(1)
+
             # Phase 2: Upload test (client sends to server)
             self.stats.current_phase = "upload"
             self.stats.upload.running = True
@@ -115,7 +124,9 @@ class IperfTester:
         finally:
             self.stats.running = False
 
-    def _run_single_test(self, reverse: bool, result: IperfResult):
+    _RETRYABLE_ERRORS = ("unable to connect", "connection refused", "the server is busy")
+
+    def _run_single_test(self, reverse: bool, result: IperfResult, _retries: int = 3):
         cmd = [
             self._iperf_path,
             "-c", self.server,
@@ -153,6 +164,16 @@ class IperfTester:
             if proc.returncode != 0 and not result.error:
                 result.error = (stderr.strip()
                                 or f"iperf3 exited with code {proc.returncode}")
+
+            # Retry on transient connection errors (server busy / cooldown)
+            if result.error and _retries > 0:
+                err_lower = result.error.lower()
+                if any(msg in err_lower for msg in self._RETRYABLE_ERRORS):
+                    if not self._stop_event.is_set():
+                        time.sleep(2)
+                        result.error = ""
+                        result.intervals.clear()
+                        self._run_single_test(reverse, result, _retries - 1)
 
         except subprocess.TimeoutExpired:
             proc.kill()
