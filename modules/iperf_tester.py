@@ -144,11 +144,15 @@ class IperfTester:
 
             stdout, stderr = proc.communicate(timeout=self.duration + 120)
 
-            if proc.returncode != 0:
-                result.error = stderr.strip() or f"iperf3 exited with code {proc.returncode}"
-                return
+            # Always try to parse JSON first — iperf3 -J puts error details
+            # in stdout JSON even when exit code is non-zero.
+            if stdout and stdout.strip():
+                self._parse_json_output(stdout, result)
 
-            self._parse_json_output(stdout, result)
+            # If parsing didn't set an error but the process failed, use stderr
+            if proc.returncode != 0 and not result.error:
+                result.error = (stderr.strip()
+                                or f"iperf3 exited with code {proc.returncode}")
 
         except subprocess.TimeoutExpired:
             proc.kill()
