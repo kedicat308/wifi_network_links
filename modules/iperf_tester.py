@@ -55,7 +55,7 @@ class IperfStats:
 class IperfTester:
     """Runs iperf3 tests for bandwidth measurement."""
 
-    def __init__(self, server: str, port: int = 5201, duration: int = 10,
+    def __init__(self, server: str, port: int = 60998, duration: int = 10,
                  protocol: str = "tcp", bandwidth: str = "100M"):
         self.server = server
         self.port = port

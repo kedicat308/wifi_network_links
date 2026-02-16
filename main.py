@@ -7,9 +7,9 @@ Combines ping, tracert, iperf3 bandwidth testing, and WiFi analysis
 into a unified TUI dashboard.
 
 Usage:
-    python main.py --target 8.8.8.8 --iperf-server 192.168.1.100
+    python main.py
+    python main.py --target 10.216.65.91 --iperf-server 10.216.65.91 --iperf-port 60998
     python main.py --target baidu.com --iperf-server 10.0.0.1 --iperf-port 5201
-    python main.py --target 8.8.8.8  (skip iperf if no server specified)
 
 Requirements:
     pip install rich
@@ -31,18 +31,18 @@ def parse_args():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""\
 Examples:
-  python main.py --target 8.8.8.8
-  python main.py --target baidu.com --iperf-server 192.168.1.100
-  python main.py --target 8.8.8.8 --iperf-server 10.0.0.1 --iperf-port 5201 --iperf-proto udp
-  python main.py --no-wifi --target 8.8.8.8
+  python main.py
+  python main.py --target 10.216.65.91
+  python main.py --target baidu.com --iperf-server 10.0.0.1 --iperf-port 5201
+  python main.py --iperf-proto udp --no-wifi
 """,
     )
 
     # Ping / Tracert
     parser.add_argument(
         "--target", "-t",
-        default="8.8.8.8",
-        help="Target host for ping and tracert (default: 8.8.8.8)",
+        default="10.216.65.91",
+        help="Target host for ping and tracert (default: 10.216.65.91)",
     )
     parser.add_argument(
         "--ping-count", "-n",
@@ -54,14 +54,14 @@ Examples:
     # iperf3
     parser.add_argument(
         "--iperf-server", "-s",
-        default=None,
-        help="iperf3 server address (skip iperf if not specified)",
+        default="10.216.65.91",
+        help="iperf3 server address (default: 10.216.65.91)",
     )
     parser.add_argument(
         "--iperf-port",
         type=int,
-        default=5201,
-        help="iperf3 server port (default: 5201)",
+        default=60998,
+        help="iperf3 server port (default: 60998)",
     )
     parser.add_argument(
         "--iperf-duration",
