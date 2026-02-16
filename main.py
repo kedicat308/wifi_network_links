@@ -74,8 +74,8 @@ Examples:
     parser.add_argument(
         "--iperf-port",
         type=int,
-        default=5201,
-        help="iperf3 server port (default: 5201)",
+        default=60998,
+        help="iperf3 server port (default: 60998)",
     )
     parser.add_argument(
         "--iperf-duration",
