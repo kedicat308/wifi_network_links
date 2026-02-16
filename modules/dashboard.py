@@ -359,52 +359,29 @@ class Dashboard:
 
         return layout
 
-    def run(self, refresh_rate: float = 0.5, tracert_grace: int = 15):
-        """Run the live dashboard.
-
-        Args:
-            refresh_rate: seconds between screen refreshes.
-            tracert_grace: max extra seconds to wait for tracert after other
-                           tasks finish.
-        """
+    def run(self, refresh_rate: float = 0.5):
+        """Run the live dashboard."""
         with Live(self.build_layout(), console=self.console,
                   refresh_per_second=int(1 / refresh_rate), screen=True) as live:
             try:
-                grace_deadline = None
                 while True:
                     live.update(self.build_layout())
                     time.sleep(refresh_rate)
 
-                    # Check if primary tasks (ping, iperf, wifi) are done
-                    primary_done = True
+                    # Check if ALL tasks are done (including tracert)
+                    all_done = True
                     if self.ping_tracer and self.ping_tracer.ping_stats.running:
-                        primary_done = False
+                        all_done = False
+                    if self.ping_tracer and self.ping_tracer.tracert_stats.running:
+                        all_done = False
                     if self.iperf_tester and self.iperf_tester.stats.running:
-                        primary_done = False
+                        all_done = False
                     if self.wifi_scanner and self.wifi_scanner.stats.running:
-                        primary_done = False
+                        all_done = False
 
-                    if not primary_done or not self._has_any_data():
-                        continue
-
-                    # Primary tasks done — check tracert
-                    tracert_running = (self.ping_tracer
-                                       and self.ping_tracer.tracert_stats.running)
-
-                    if not tracert_running:
-                        # Tracert also done, show results briefly then exit
+                    if all_done and self._has_any_data():
+                        # Keep showing for a bit after everything completes
                         for _ in range(20):
-                            live.update(self.build_layout())
-                            time.sleep(0.5)
-                        break
-
-                    # Tracert still running — start grace countdown
-                    if grace_deadline is None:
-                        grace_deadline = time.time() + tracert_grace
-
-                    if time.time() >= grace_deadline:
-                        # Grace period expired, exit even if tracert isn't done
-                        for _ in range(6):
                             live.update(self.build_layout())
                             time.sleep(0.5)
                         break
