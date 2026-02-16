@@ -17,6 +17,7 @@ Requirements:
 
 import argparse
 import sys
+import threading
 import time
 
 from modules.ping_tracer import PingTracer
@@ -162,6 +163,7 @@ def main():
         wifi_scanner = WifiScanner(
             scan_count=args.wifi_scans,
             scan_interval=3.0,
+            do_reconnect=not args.no_reconnect,
         )
 
     # Build dashboard
@@ -171,16 +173,27 @@ def main():
         wifi_scanner=wifi_scanner,
     )
 
-    # Start all tasks
-    try:
+    # Helper: start network tests after WiFi reconnect is done (or immediately
+    # if WiFi is disabled).  This ensures the disconnect/reconnect phase never
+    # runs concurrently with ping/tracert/iperf.
+    def _start_network_tests():
+        if wifi_scanner:
+            wifi_scanner.reconnect_done.wait()  # blocks until reconnect done
         ping_tracer.start_ping()
         ping_tracer.start_tracert()
-
         if iperf_tester:
             iperf_tester.start()
 
+    # Start tasks
+    try:
+        # WiFi scanner starts first (info → reconnect → scans)
         if wifi_scanner:
             wifi_scanner.start()
+
+        # Network tests start in a background thread; they will wait for
+        # WiFi reconnect to finish before actually launching.
+        starter = threading.Thread(target=_start_network_tests, daemon=True)
+        starter.start()
 
         # Run dashboard (blocks until done or Ctrl+C)
         dashboard.run()

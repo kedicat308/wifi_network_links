@@ -71,12 +71,17 @@ class WifiStats:
 class WifiScanner:
     """Manages WiFi diagnostics using Windows netsh commands."""
 
-    def __init__(self, scan_count: int = 5, scan_interval: float = 3.0):
+    def __init__(self, scan_count: int = 5, scan_interval: float = 3.0,
+                 do_reconnect: bool = True):
         self.scan_count = scan_count
         self.scan_interval = scan_interval
+        self.do_reconnect = do_reconnect
         self.stats = WifiStats(total_scans=scan_count)
         self._thread = None
         self._stop_event = threading.Event()
+        # Signalled when the disconnect/reconnect phase is finished (or skipped).
+        # Other network tests should wait on this before starting.
+        self.reconnect_done = threading.Event()
 
     def start(self):
         self.stats.running = True
@@ -110,12 +115,16 @@ class WifiScanner:
             self.stats.current = self._get_interface_info()
 
             if self._stop_event.is_set():
+                self.reconnect_done.set()
                 return
 
-            # Phase 2: Disconnect and reconnect
-            if self.stats.current and self.stats.current.ssid:
+            # Phase 2: Disconnect and reconnect (if enabled)
+            if self.do_reconnect and self.stats.current and self.stats.current.ssid:
                 self.stats.current_phase = "reconnect"
                 self._reconnect_wifi(self.stats.current.ssid, self.stats.current.name)
+
+            # Signal that reconnect is done — other tests can start now
+            self.reconnect_done.set()
 
             if self._stop_event.is_set():
                 return
@@ -143,6 +152,7 @@ class WifiScanner:
         except Exception as e:
             self.stats.error = str(e)
         finally:
+            self.reconnect_done.set()  # ensure never blocks forever
             self.stats.running = False
 
     def _get_interface_info(self) -> WifiInterface:
