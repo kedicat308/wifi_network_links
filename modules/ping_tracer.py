@@ -54,7 +54,7 @@ class PingTracer:
     """Runs ping and tracert commands and parses output."""
 
     def __init__(self, target: str, ping_count: int = 50,
-                 tracert_max_hops: int = 15, tracert_timeout_ms: int = 1000,
+                 tracert_max_hops: int = 15, tracert_timeout_ms: int = 500,
                  tracert_max_seconds: int = 30):
         self.target = target
         self.ping_count = ping_count
