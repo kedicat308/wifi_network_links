@@ -3,6 +3,7 @@
 import subprocess
 import json
 import os
+import socket
 import time
 import threading
 from dataclasses import dataclass, field
@@ -126,7 +127,26 @@ class IperfTester:
 
     _RETRYABLE_ERRORS = ("unable to connect", "connection refused", "the server is busy")
 
+    def _check_port_open(self, timeout: float = 3) -> str | None:
+        """Quick TCP connect check. Returns error string or None if OK."""
+        try:
+            with socket.create_connection((self.server, self.port), timeout=timeout):
+                return None
+        except OSError as e:
+            return f"TCP connect to {self.server}:{self.port} failed: {e}"
+
     def _run_single_test(self, reverse: bool, result: IperfResult, _retries: int = 3):
+        # Pre-check: can we even reach the port?
+        port_err = self._check_port_open()
+        if port_err:
+            result.error = port_err
+            # Still allow retries
+            if _retries > 0 and not self._stop_event.is_set():
+                time.sleep(2)
+                result.error = ""
+                self._run_single_test(reverse, result, _retries - 1)
+            return
+
         cmd = [
             self._iperf_path,
             "-c", self.server,
@@ -164,6 +184,10 @@ class IperfTester:
             if proc.returncode != 0 and not result.error:
                 result.error = (stderr.strip()
                                 or f"iperf3 exited with code {proc.returncode}")
+
+            # Append the actual command for debugging
+            if result.error:
+                result.error += f"  [cmd: {' '.join(cmd)}]"
 
             # Retry on transient connection errors (server busy / cooldown)
             if result.error and _retries > 0:
