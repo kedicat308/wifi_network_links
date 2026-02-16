@@ -1,0 +1,186 @@
+#!/usr/bin/env python3
+"""
+WiFi Network Diagnostics Tool
+==============================
+A terminal-based network diagnostic tool inspired by trippy.
+Combines ping, tracert, iperf3 bandwidth testing, and WiFi analysis
+into a unified TUI dashboard.
+
+Usage:
+    python main.py --target 8.8.8.8 --iperf-server 192.168.1.100
+    python main.py --target baidu.com --iperf-server 10.0.0.1 --iperf-port 5201
+    python main.py --target 8.8.8.8  (skip iperf if no server specified)
+
+Requirements:
+    pip install rich
+"""
+
+import argparse
+import sys
+import time
+
+from modules.ping_tracer import PingTracer
+from modules.iperf_tester import IperfTester
+from modules.wifi_scanner import WifiScanner
+from modules.dashboard import Dashboard
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(
+        description="WiFi Network Diagnostics - Terminal Dashboard",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""\
+Examples:
+  python main.py --target 8.8.8.8
+  python main.py --target baidu.com --iperf-server 192.168.1.100
+  python main.py --target 8.8.8.8 --iperf-server 10.0.0.1 --iperf-port 5201 --iperf-proto udp
+  python main.py --no-wifi --target 8.8.8.8
+""",
+    )
+
+    # Ping / Tracert
+    parser.add_argument(
+        "--target", "-t",
+        default="8.8.8.8",
+        help="Target host for ping and tracert (default: 8.8.8.8)",
+    )
+    parser.add_argument(
+        "--ping-count", "-n",
+        type=int,
+        default=50,
+        help="Number of ping packets (default: 50)",
+    )
+
+    # iperf3
+    parser.add_argument(
+        "--iperf-server", "-s",
+        default=None,
+        help="iperf3 server address (skip iperf if not specified)",
+    )
+    parser.add_argument(
+        "--iperf-port",
+        type=int,
+        default=5201,
+        help="iperf3 server port (default: 5201)",
+    )
+    parser.add_argument(
+        "--iperf-duration",
+        type=int,
+        default=10,
+        help="iperf3 test duration in seconds (default: 10)",
+    )
+    parser.add_argument(
+        "--iperf-proto",
+        choices=["tcp", "udp"],
+        default="tcp",
+        help="iperf3 protocol: tcp or udp (default: tcp)",
+    )
+    parser.add_argument(
+        "--iperf-bandwidth",
+        default="100M",
+        help="iperf3 UDP target bandwidth (default: 100M, only for UDP)",
+    )
+
+    # WiFi
+    parser.add_argument(
+        "--no-wifi",
+        action="store_true",
+        help="Skip WiFi scanning (for non-WiFi connections)",
+    )
+    parser.add_argument(
+        "--wifi-scans",
+        type=int,
+        default=5,
+        help="Number of WiFi scan iterations (default: 5)",
+    )
+    parser.add_argument(
+        "--no-reconnect",
+        action="store_true",
+        help="Skip WiFi disconnect/reconnect test",
+    )
+
+    return parser.parse_args()
+
+
+def main():
+    args = parse_args()
+
+    print("\n  WiFi Network Diagnostics Tool")
+    print("  ==============================")
+    print(f"  Target:       {args.target}")
+    if args.iperf_server:
+        print(f"  iperf3:       {args.iperf_server}:{args.iperf_port} ({args.iperf_proto.upper()})")
+    print(f"  WiFi scan:    {'disabled' if args.no_wifi else f'{args.wifi_scans} rounds'}")
+    print()
+    print("  Starting in 2 seconds... (Ctrl+C to cancel)")
+    time.sleep(2)
+
+    # Initialize modules
+    ping_tracer = PingTracer(target=args.target, ping_count=args.ping_count)
+
+    iperf_tester = None
+    if args.iperf_server:
+        iperf_tester = IperfTester(
+            server=args.iperf_server,
+            port=args.iperf_port,
+            duration=args.iperf_duration,
+            protocol=args.iperf_proto,
+            bandwidth=args.iperf_bandwidth,
+        )
+
+    wifi_scanner = None
+    if not args.no_wifi:
+        wifi_scanner = WifiScanner(
+            scan_count=args.wifi_scans,
+            scan_interval=3.0,
+        )
+
+    # Build dashboard
+    dashboard = Dashboard(
+        ping_tracer=ping_tracer,
+        iperf_tester=iperf_tester,
+        wifi_scanner=wifi_scanner,
+    )
+
+    # Start all tasks
+    try:
+        ping_tracer.start_ping()
+        ping_tracer.start_tracert()
+
+        if iperf_tester:
+            iperf_tester.start()
+
+        if wifi_scanner:
+            wifi_scanner.start()
+
+        # Run dashboard (blocks until done or Ctrl+C)
+        dashboard.run()
+
+    except KeyboardInterrupt:
+        pass
+    finally:
+        # Clean shutdown
+        ping_tracer.stop()
+        if iperf_tester:
+            iperf_tester.stop()
+        if wifi_scanner:
+            wifi_scanner.stop()
+
+        print("\n  Diagnostics complete. Results summary:")
+        print(f"  Ping: {ping_tracer.ping_stats.sent} sent, "
+              f"{ping_tracer.ping_stats.loss_pct:.1f}% loss, "
+              f"avg {ping_tracer.ping_stats.avg_ms:.0f}ms")
+        if iperf_tester:
+            dl = iperf_tester.stats.download
+            ul = iperf_tester.stats.upload
+            print(f"  iperf3 Download: {dl.bandwidth_mbps:.1f} Mbps")
+            print(f"  iperf3 Upload:   {ul.bandwidth_mbps:.1f} Mbps")
+        if wifi_scanner and wifi_scanner.stats.current:
+            info = wifi_scanner.stats.current
+            print(f"  WiFi: {info.ssid} (Signal: {info.signal_pct}%, "
+                  f"Channel: {info.channel})")
+        print()
+
+
+if __name__ == "__main__":
+    main()
