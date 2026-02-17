@@ -53,7 +53,6 @@ Examples:
   python main_iperf2.py                                (default: 10.216.65.91 for all)
   python main_iperf2.py --target 192.168.1.1           (unified IP for ping/tracert/iperf)
   python main_iperf2.py --target 10.216.65.91 --iperf-server 192.168.1.100
-  python main_iperf2.py --target 10.216.65.91 --iperf-port 62998 --iperf-proto udp
   python main_iperf2.py --no-wifi --target 10.216.65.91
 """,
     )
@@ -102,17 +101,6 @@ Examples:
         help="iperf2 test duration in seconds (default: 10)",
     )
     parser.add_argument(
-        "--iperf-proto",
-        choices=["tcp", "udp"],
-        default="tcp",
-        help="iperf2 protocol: tcp or udp (default: tcp)",
-    )
-    parser.add_argument(
-        "--iperf-bandwidth",
-        default="100M",
-        help="iperf2 UDP target bandwidth (default: 100M, only for UDP)",
-    )
-    parser.add_argument(
         "--no-iperf",
         action="store_true",
         help="Skip iperf2 bandwidth test",
@@ -152,7 +140,7 @@ def main():
     print("  ========================================")
     print(f"  Target:       {args.target}")
     if not args.no_iperf:
-        print(f"  iperf2:       {args.iperf_server}:{args.iperf_port} ({args.iperf_proto.upper()})")
+        print(f"  iperf2:       {args.iperf_server}:{args.iperf_port} (TCP)")
     print(f"  WiFi scan:    {'disabled' if args.no_wifi else f'{args.wifi_scans} rounds'}")
     print()
     print("  Starting in 2 seconds... (Ctrl+C to cancel)")
@@ -181,8 +169,6 @@ def main():
             server=args.iperf_server,
             port=args.iperf_port,
             duration=args.iperf_duration,
-            protocol=args.iperf_proto,
-            bandwidth=args.iperf_bandwidth,
             iperf_path=iperf_exe,
         )
 

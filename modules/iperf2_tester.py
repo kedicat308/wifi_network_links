@@ -21,22 +21,14 @@ class IperfStream:
     interval: str
     transfer_bytes: float
     bandwidth_mbps: float
-    jitter_ms: float = 0.0
-    lost_packets: int = 0
-    total_packets: int = 0
-    loss_pct: float = 0.0
 
 
 @dataclass
 class IperfResult:
     direction: str  # "upload" or "download"
-    protocol: str  # "UDP" or "TCP"
+    protocol: str = "TCP"
     bandwidth_mbps: float = 0.0
     transfer_mb: float = 0.0
-    jitter_ms: float = 0.0
-    lost_packets: int = 0
-    total_packets: int = 0
-    loss_pct: float = 0.0
     intervals: list = field(default_factory=list)
     running: bool = False
     done: bool = False
@@ -61,22 +53,19 @@ class IperfStats:
 
 
 # ---------------------------------------------------------------------------
-# iperf2 text output regex
+# iperf2 text output regex (TCP only)
 # ---------------------------------------------------------------------------
 # Matches lines like:
 #   [  4]  0.00-1.00 sec  11.2 MBytes  93.9 Mbits/sec
-#   [  4]  0.00-10.00 sec  1.25 MBytes  1.05 Mbits/sec   0.043 ms  0/ 892 (0%)
+#   [  4]  0.00-10.00 sec   112 MBytes  93.8 Mbits/sec
 #
 # Groups: 1=start, 2=end, 3=transfer_val, 4=transfer_unit(KMG or empty),
-#         5=bw_val, 6=bw_unit(KMG or empty),
-#         7=jitter_ms (optional), 8=lost (optional),
-#         9=total (optional), 10=loss_pct (optional)
+#         5=bw_val, 6=bw_unit(KMG or empty)
 _LINE_RE = re.compile(
     r"\[\s*\d+\]\s+"
     r"([\d.]+)\s*-\s*([\d.]+)\s+sec\s+"
     r"([\d.]+)\s+([KMG]?)Bytes\s+"
     r"([\d.]+)\s+([KMG]?)bits/sec"
-    r"(?:\s+([\d.]+)\s+ms\s+(\d+)/\s*(\d+)\s+\(([\d.e+-]+)%\))?"
 )
 
 # Binary multipliers for transfer (Bytes)
@@ -99,13 +88,10 @@ class Iperf2Tester:
     """Runs iperf2 tests for bandwidth measurement."""
 
     def __init__(self, server: str, port: int = 62998, duration: int = 10,
-                 protocol: str = "tcp", bandwidth: str = "100M",
                  iperf_path: str = ""):
         self.server = server
         self.port = port
         self.duration = duration
-        self.protocol = protocol
-        self.bandwidth = bandwidth
         self.stats = IperfStats(server=server, port=port)
         self._thread = None
         self._stop_event = threading.Event()
@@ -232,11 +218,7 @@ class Iperf2Tester:
             "-i", "1",  # 1-second interval reports
         ]
 
-        if self.protocol == "udp":
-            cmd.extend(["-u", "-b", self.bandwidth])
-            result.protocol = "UDP"
-        else:
-            result.protocol = "TCP"
+        result.protocol = "TCP"
 
         if reverse:
             cmd.append("--reverse")
@@ -293,15 +275,12 @@ class Iperf2Tester:
     # Text output parsing
     # ------------------------------------------------------------------
     def _parse_text_output(self, output: str, result: IperfResult):
-        """Parse iperf2 human-readable text output.
+        """Parse iperf2 human-readable TCP text output.
 
-        iperf2 output format (TCP):
+        Example:
             [  4]  0.00-1.00 sec  11.2 MBytes  93.9 Mbits/sec
             ...
             [  4]  0.00-10.00 sec   112 MBytes  93.8 Mbits/sec
-
-        iperf2 output format (UDP, server report):
-            [  4]  0.00-10.01 sec  1.25 MBytes  1.05 Mbits/sec  0.043 ms  0/892 (0%)
         """
         parsed = []
         for line in output.splitlines():
@@ -322,10 +301,6 @@ class Iperf2Tester:
                 "span": end - start,
                 "bw_mbps": _bw_to_mbps(bw_val, bw_prefix),
                 "transfer_bytes": _transfer_to_bytes(transfer_val, transfer_prefix),
-                "jitter": float(m.group(7)) if m.group(7) else None,
-                "lost": int(m.group(8)) if m.group(8) else None,
-                "total": int(m.group(9)) if m.group(9) else None,
-                "loss_pct": float(m.group(10)) if m.group(10) else None,
             }
             parsed.append(entry)
 
@@ -348,21 +323,11 @@ class Iperf2Tester:
             summaries = [parsed[-1]]
             intervals = parsed[:-1] if len(parsed) > 1 else []
 
-        # Use the LAST summary line for final stats.
-        # For UDP, the server report (with jitter/loss) comes after the client
-        # summary, so taking the last one gives us the richest data.
+        # Use the last summary line for final stats
         if summaries:
             summary = summaries[-1]
             result.bandwidth_mbps = summary["bw_mbps"]
             result.transfer_mb = summary["transfer_bytes"] / (1024 * 1024)
-            if summary["jitter"] is not None:
-                result.jitter_ms = summary["jitter"]
-            if summary["lost"] is not None:
-                result.lost_packets = summary["lost"]
-            if summary["total"] is not None:
-                result.total_packets = summary["total"]
-            if summary["loss_pct"] is not None:
-                result.loss_pct = summary["loss_pct"]
 
         # Add per-second intervals
         for iv in intervals:
@@ -370,10 +335,5 @@ class Iperf2Tester:
                 interval=f"{iv['start']:.1f}-{iv['end']:.1f}",
                 transfer_bytes=iv["transfer_bytes"],
                 bandwidth_mbps=iv["bw_mbps"],
-                jitter_ms=iv["jitter"] or 0.0,
-                lost_packets=iv["lost"] or 0,
-                total_packets=iv["total"] or 0,
             )
-            if stream.total_packets > 0:
-                stream.loss_pct = (stream.lost_packets / stream.total_packets) * 100
             result.intervals.append(stream)

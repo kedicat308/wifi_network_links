@@ -204,15 +204,12 @@ class Dashboard:
         dl = stats.download
         if dl.done or dl.running:
             table.add_row("", "")
-            table.add_row("[cyan]Download[/]", f"[dim]{dl.protocol}[/]")
+            table.add_row("[cyan]Download[/]", "[dim]TCP[/]")
             if dl.error:
                 table.add_row("  Error", f"[red]{dl.error}[/]")
             else:
                 table.add_row("  Bandwidth", bandwidth_bar(dl.bandwidth_mbps))
                 table.add_row("  Transfer", f"{dl.transfer_mb:.1f} MB")
-                if dl.protocol == "UDP":
-                    table.add_row("  Jitter", f"{dl.jitter_ms:.2f} ms")
-                    table.add_row("  Loss", f"{dl.loss_pct:.1f}%")
 
                 # Interval sparkline
                 if dl.intervals:
@@ -223,15 +220,12 @@ class Dashboard:
         ul = stats.upload
         if ul.done or ul.running:
             table.add_row("", "")
-            table.add_row("[magenta]Upload[/]", f"[dim]{ul.protocol}[/]")
+            table.add_row("[magenta]Upload[/]", "[dim]TCP[/]")
             if ul.error:
                 table.add_row("  Error", f"[red]{ul.error}[/]")
             else:
                 table.add_row("  Bandwidth", bandwidth_bar(ul.bandwidth_mbps))
                 table.add_row("  Transfer", f"{ul.transfer_mb:.1f} MB")
-                if ul.protocol == "UDP":
-                    table.add_row("  Jitter", f"{ul.jitter_ms:.2f} ms")
-                    table.add_row("  Loss", f"{ul.loss_pct:.1f}%")
 
                 if ul.intervals:
                     bws = [i.bandwidth_mbps for i in ul.intervals]
