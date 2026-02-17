@@ -229,6 +229,11 @@ class WifiScanner:
                     f"[{ts}] Reconnected! Signal: {info.signal_pct}% "
                     f"Channel: {info.channel}"
                 )
+                # Wait for DHCP / ARP to settle before other tests start
+                for _ in range(30):
+                    if self._stop_event.is_set():
+                        return
+                    time.sleep(0.1)
                 return
 
         ts = time.strftime("%H:%M:%S")
