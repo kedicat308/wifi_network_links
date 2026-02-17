@@ -17,6 +17,7 @@ Clients POST JSON to ``/report``.  The server responds with 200 on success.
 
 import argparse
 import json
+import logging
 import os
 import sys
 import threading
@@ -28,10 +29,28 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 DEFAULT_HOST = "10.216.65.91"
 DEFAULT_PORT = 62997
 DATA_FILE = "network_inspect.json"
+LOG_FILE = "server_log.log"
 
 # A single lock guards all reads/writes to the JSON file so concurrent
 # client submissions never corrupt or lose data.
 _file_lock = threading.Lock()
+
+# ---------- logging setup ----------
+
+logger = logging.getLogger("server")
+logger.setLevel(logging.INFO)
+_log_fmt = logging.Formatter("%(asctime)s  %(levelname)-5s  %(message)s",
+                             datefmt="%Y-%m-%d %H:%M:%S")
+
+# Console handler
+_ch = logging.StreamHandler(sys.stdout)
+_ch.setFormatter(_log_fmt)
+logger.addHandler(_ch)
+
+# File handler (append mode, UTF-8)
+_fh = logging.FileHandler(LOG_FILE, encoding="utf-8")
+_fh.setFormatter(_log_fmt)
+logger.addHandler(_fh)
 
 
 # ---------- helpers ----------
@@ -78,14 +97,18 @@ def merge_report(path: str, report: dict) -> str:
 class ReportHandler(BaseHTTPRequestHandler):
     """Handle POST /report from diagnostic clients."""
 
-    # Suppress default stderr logging per request
+    def _client(self) -> str:
+        """Return 'ip:port' of the remote client."""
+        return f"{self.client_address[0]}:{self.client_address[1]}"
+
+    # Route all default HTTP log lines through our logger
     def log_message(self, fmt, *args):
-        ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        sys.stdout.write(f"  [{ts}] {fmt % args}\n")
-        sys.stdout.flush()
+        logger.info("%s  %s", self._client(), fmt % args)
 
     def do_GET(self):
         """GET / returns a simple status page; GET /data returns the JSON."""
+        logger.info("CONNECT  %s  GET %s", self._client(), self.path)
+
         if self.path == "/data":
             with _file_lock:
                 data = _load_data(DATA_FILE)
@@ -95,6 +118,7 @@ class ReportHandler(BaseHTTPRequestHandler):
             self.send_header("Content-Length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
+            logger.info("SUCCESS  %s  GET /data  (%d reports)", self._client(), len(data))
             return
 
         # Default: status page
@@ -113,18 +137,25 @@ class ReportHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
+        logger.info("SUCCESS  %s  GET /  (%d reports)", self._client(), count)
 
     def do_POST(self):
+        logger.info("CONNECT  %s  POST %s", self._client(), self.path)
+
         if self.path != "/report":
+            logger.warning("FAIL  %s  POST %s  404 Not Found", self._client(), self.path)
             self.send_error(404, "Not Found")
             return
 
         # Read body
         content_length = int(self.headers.get("Content-Length", 0))
         if content_length == 0:
+            logger.warning("FAIL  %s  POST /report  400 Empty body", self._client())
             self.send_error(400, "Empty body")
             return
         if content_length > 10 * 1024 * 1024:  # 10 MB safety limit
+            logger.warning("FAIL  %s  POST /report  413 Payload too large (%d bytes)",
+                           self._client(), content_length)
             self.send_error(413, "Payload too large")
             return
 
@@ -132,10 +163,12 @@ class ReportHandler(BaseHTTPRequestHandler):
         try:
             report = json.loads(raw.decode("utf-8"))
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
+            logger.warning("FAIL  %s  POST /report  400 Invalid JSON: %s", self._client(), exc)
             self.send_error(400, f"Invalid JSON: {exc}")
             return
 
         if not isinstance(report, dict):
+            logger.warning("FAIL  %s  POST /report  400 Top-level not object", self._client())
             self.send_error(400, "Top-level JSON must be an object")
             return
 
@@ -148,7 +181,7 @@ class ReportHandler(BaseHTTPRequestHandler):
         self.send_header("Content-Length", str(len(resp)))
         self.end_headers()
         self.wfile.write(resp)
-        self.log_message("Stored report: %s", key)
+        logger.info("SUCCESS  %s  POST /report  stored -> %s", self._client(), key)
 
 
 class ThreadedHTTPServer(HTTPServer):
@@ -175,6 +208,7 @@ def parse_args():
     parser.add_argument("--host", default=DEFAULT_HOST, help=f"Bind address (default: {DEFAULT_HOST})")
     parser.add_argument("--port", type=int, default=DEFAULT_PORT, help=f"Bind port (default: {DEFAULT_PORT})")
     parser.add_argument("--output", default=DATA_FILE, help=f"Output JSON file (default: {DATA_FILE})")
+    parser.add_argument("--log", default=LOG_FILE, help=f"Log file path (default: {LOG_FILE})")
     return parser.parse_args()
 
 
@@ -183,12 +217,20 @@ def main():
     global DATA_FILE
     DATA_FILE = args.output
 
+    # Update file handler path if user changed --log
+    _fh.close()
+    logger.removeHandler(_fh)
+    fh = logging.FileHandler(args.log, encoding="utf-8")
+    fh.setFormatter(_log_fmt)
+    logger.addHandler(fh)
+
     server = ThreadedHTTPServer((args.host, args.port), ReportHandler)
     print()
     print("  Network Inspect Collection Server")
     print("  ==================================")
     print(f"  Listening on  : {args.host}:{args.port}")
     print(f"  Data file     : {os.path.abspath(DATA_FILE)}")
+    print(f"  Log file      : {os.path.abspath(args.log)}")
     print(f"  POST endpoint : http://{args.host}:{args.port}/report")
     print(f"  GET  status   : http://{args.host}:{args.port}/")
     print(f"  GET  JSON     : http://{args.host}:{args.port}/data")
@@ -196,9 +238,12 @@ def main():
     print("  Waiting for client reports... (Ctrl+C to stop)")
     print()
 
+    logger.info("Server started on %s:%d", args.host, args.port)
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
+        logger.info("Server shutting down (Ctrl+C)")
         print("\n  Server shutting down.")
         server.shutdown()
 
