@@ -1,6 +1,8 @@
 """Unified TUI dashboard (iperf2 variant) - all output in one terminal screen using rich."""
 
+import sys
 import time
+import threading
 from rich.console import Console
 from rich.layout import Layout
 from rich.live import Live
@@ -76,6 +78,8 @@ class Dashboard:
         self.wifi_scanner = wifi_scanner
         self.console = Console()
         self._start_time = time.time()
+        self._quit_event = threading.Event()
+        self._all_done = False
 
     def _make_header(self) -> Panel:
         elapsed = int(time.time() - self._start_time)
@@ -378,40 +382,81 @@ class Dashboard:
         layout["wifi_signal"].update(self._make_wifi_signal_history_panel())
 
         # Footer
-        footer = Text(" Press Ctrl+C to stop ", style="dim")
+        if self._all_done:
+            footer = Text(" All tests complete. Press q to quit ", style="bold green")
+        else:
+            footer = Text(" Running... Press q to quit ", style="dim")
         layout["footer"].update(Align.center(footer))
 
         return layout
 
+    # ------------------------------------------------------------------
+    # Keyboard listener — detect 'q' to quit
+    # ------------------------------------------------------------------
+    def _key_listener(self):
+        """Background thread: poll for 'q' keypress (non-blocking)."""
+        try:
+            if sys.platform == "win32":
+                import msvcrt
+                while not self._quit_event.is_set():
+                    if msvcrt.kbhit():
+                        ch = msvcrt.getch()
+                        if ch in (b"q", b"Q"):
+                            self._quit_event.set()
+                            return
+                    time.sleep(0.1)
+            else:
+                import select
+                import tty
+                import termios
+                fd = sys.stdin.fileno()
+                old_settings = termios.tcgetattr(fd)
+                try:
+                    tty.setcbreak(fd)
+                    while not self._quit_event.is_set():
+                        if select.select([sys.stdin], [], [], 0.1)[0]:
+                            ch = sys.stdin.read(1)
+                            if ch in ("q", "Q"):
+                                self._quit_event.set()
+                                return
+                finally:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        except Exception:
+            pass  # Ctrl+C still works as fallback
+
+    # ------------------------------------------------------------------
+    # Main loop
+    # ------------------------------------------------------------------
     def run(self, refresh_rate: float = 0.5):
-        """Run the live dashboard."""
+        """Run the live dashboard.  Stays on screen until 'q' is pressed."""
+        key_thread = threading.Thread(target=self._key_listener, daemon=True)
+        key_thread.start()
+
         with Live(self.build_layout(), console=self.console,
                   refresh_per_second=int(1 / refresh_rate), screen=True) as live:
             try:
-                while True:
+                while not self._quit_event.is_set():
+                    # Check if all tasks finished
+                    if not self._all_done:
+                        done = True
+                        if self.ping_tracer and self.ping_tracer.ping_stats.running:
+                            done = False
+                        if self.ping_tracer and self.ping_tracer.tracert_stats.running:
+                            done = False
+                        if self.iperf_tester and self.iperf_tester.stats.running:
+                            done = False
+                        if self.wifi_scanner and self.wifi_scanner.stats.running:
+                            done = False
+                        if done and self._has_any_data():
+                            self._all_done = True
+
                     live.update(self.build_layout())
                     time.sleep(refresh_rate)
 
-                    # Check if ALL tasks are done (including tracert)
-                    all_done = True
-                    if self.ping_tracer and self.ping_tracer.ping_stats.running:
-                        all_done = False
-                    if self.ping_tracer and self.ping_tracer.tracert_stats.running:
-                        all_done = False
-                    if self.iperf_tester and self.iperf_tester.stats.running:
-                        all_done = False
-                    if self.wifi_scanner and self.wifi_scanner.stats.running:
-                        all_done = False
-
-                    if all_done and self._has_any_data():
-                        # Keep showing for a bit after everything completes
-                        for _ in range(20):
-                            live.update(self.build_layout())
-                            time.sleep(0.5)
-                        break
-
             except KeyboardInterrupt:
                 pass
+            finally:
+                self._quit_event.set()
 
     def _has_any_data(self) -> bool:
         if self.ping_tracer and self.ping_tracer.ping_stats.sent > 0:
