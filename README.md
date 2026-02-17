@@ -63,7 +63,7 @@ Terminal-based网络诊断工具，集成 ping、tracert、iperf 带宽测试和
 | **SSID** | 当前连接的无线网络名称 |
 | **BSSID** | 当前关联的接入点 MAC 地址，用于区分同名 AP |
 | **State** | 连接状态 (connected / disconnected 等) |
-| **Signal** | 信号强度百分比。>70% 良好 (绿色)，40-70% 一般 (黄色)，<40% 较差 (红色) |
+| **Signal** | Windows 将 RSSI (dBm) 映射为百分比，公式：quality = 2×(RSSI+100)，范围 0-100%。100%≈-50dBm，80%≈-60dBm，60%≈-70dBm，40%≈-80dBm，20%≈-90dBm。仪表板颜色：>70% 绿色，40-70% 黄色，<40% 红色 |
 | **Channel** | 当前使用的信道号。2.4GHz: 1-13，5GHz: 36-165 |
 | **Radio** | 无线电类型，如 802.11ax、802.11ac 等 |
 | **Auth** | 认证方式，如 WPA2-Personal、WPA3 等 |
@@ -76,7 +76,7 @@ Terminal-based网络诊断工具，集成 ping、tracert、iperf 带宽测试和
 | **SSID** | 扫描到的无线网络名称 |
 | **BSSID** | 接入点 MAC 地址，同一 SSID 下可能有多个 BSSID (多 AP 组网) |
 | **Ch** | 该 AP 使用的信道 |
-| **Signal** | 信号强度百分比，带颜色柱状图 |
+| **Signal** | 同上，Windows RSSI→百分比映射值，带颜色柱状图 |
 | **Radio** | 无线电类型 (802.11ax/ac/n 等) |
 
 #### Signal Trend 面板
