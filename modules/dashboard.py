@@ -138,6 +138,36 @@ class Dashboard:
                     rtt_fmt(hop.rtt3_ms),
                     style=style,
                 )
+
+            # Summary statistics row
+            if stats.done:
+                all_rtts = []
+                lost_hops = 0
+                for hop in stats.hops:
+                    if hop.lost:
+                        lost_hops += 1
+                    else:
+                        for rtt in [hop.rtt1_ms, hop.rtt2_ms, hop.rtt3_ms]:
+                            if rtt >= 0:
+                                all_rtts.append(rtt)
+
+                table.add_row("", "", "", "", "", style="dim")
+                summary_parts = [f"[bold]Hops:[/] {len(stats.hops)}"]
+                if lost_hops > 0:
+                    summary_parts.append(f"[red]Lost:[/] {lost_hops}")
+                if all_rtts:
+                    avg_rtt = sum(all_rtts) / len(all_rtts)
+                    min_rtt = min(all_rtts)
+                    max_rtt = max(all_rtts)
+                    summary_parts.append(
+                        f"[bold]RTT:[/] {min_rtt:.0f}/{avg_rtt:.0f}/{max_rtt:.0f} ms"
+                    )
+                table.add_row(
+                    "",
+                    " | ".join(summary_parts),
+                    "", "", "",
+                    style="cyan",
+                )
         elif stats.running:
             table.add_row("", "[yellow]Waiting for hop responses...[/]", "", "", "")
 
@@ -146,7 +176,7 @@ class Dashboard:
             hop_count = len(stats.hops)
             status = f" [green]running... ({hop_count} hops)[/]"
         elif stats.done:
-            status = f" [dim]({len(stats.hops)} hops)[/]"
+            status = f" [dim]done ({len(stats.hops)} hops)[/]"
 
         if stats.error:
             status += f" [red]{stats.error}[/]"

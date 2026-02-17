@@ -212,6 +212,35 @@ def main():
         print(f"  Ping: {ping_tracer.ping_stats.sent} sent, "
               f"{ping_tracer.ping_stats.loss_pct:.1f}% loss, "
               f"avg {ping_tracer.ping_stats.avg_ms:.0f}ms")
+
+        # Tracert summary
+        tr = ping_tracer.tracert_stats
+        if tr.hops:
+            all_rtts = []
+            lost_hops = 0
+            for hop in tr.hops:
+                if hop.lost:
+                    lost_hops += 1
+                else:
+                    for rtt in [hop.rtt1_ms, hop.rtt2_ms, hop.rtt3_ms]:
+                        if rtt >= 0:
+                            all_rtts.append(rtt)
+            avg_rtt = sum(all_rtts) / len(all_rtts) if all_rtts else 0
+            print(f"  Tracert: {len(tr.hops)} hops"
+                  f" (lost: {lost_hops},"
+                  f" RTT min/avg/max:"
+                  f" {min(all_rtts):.0f}/{avg_rtt:.0f}/{max(all_rtts):.0f} ms)"
+                  if all_rtts else
+                  f"  Tracert: {len(tr.hops)} hops (all timed out)")
+            for hop in tr.hops:
+                rtts = []
+                for rtt in [hop.rtt1_ms, hop.rtt2_ms, hop.rtt3_ms]:
+                    rtts.append("*" if rtt < 0 else f"{rtt:.0f}ms")
+                print(f"    {hop.hop:>2d}  {hop.ip:<16s}"
+                      f"  {rtts[0]:>6s}  {rtts[1]:>6s}  {rtts[2]:>6s}")
+        elif tr.error:
+            print(f"  Tracert: {tr.error}")
+
         if iperf_tester:
             dl = iperf_tester.stats.download
             ul = iperf_tester.stats.upload

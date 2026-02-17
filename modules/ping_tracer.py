@@ -4,6 +4,7 @@ import subprocess
 import re
 import threading
 import time
+import platform
 from dataclasses import dataclass, field
 
 
@@ -150,13 +151,24 @@ class PingTracer:
                 stats.jitter_ms = sum(diffs) / len(diffs)
 
     def _run_tracert(self):
+        is_windows = platform.system() == "Windows"
         try:
-            cmd = [
-                "tracert", "-d",
-                "-w", str(self.tracert_timeout_ms),
-                "-h", str(self.tracert_max_hops),
-                self.target,
-            ]
+            if is_windows:
+                cmd = [
+                    "tracert", "-d",
+                    "-w", str(self.tracert_timeout_ms),
+                    "-h", str(self.tracert_max_hops),
+                    self.target,
+                ]
+            else:
+                # Linux/Mac: use traceroute
+                cmd = [
+                    "traceroute", "-n",
+                    "-w", str(max(1, self.tracert_timeout_ms // 1000)),
+                    "-m", str(self.tracert_max_hops),
+                    self.target,
+                ]
+
             proc = subprocess.Popen(
                 cmd,
                 stdout=subprocess.PIPE,
@@ -165,15 +177,32 @@ class PingTracer:
                 creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
             )
 
-            # Windows tracert output patterns
+            # Windows tracert output patterns (English & Chinese)
             # "  1    <1 ms    <1 ms    <1 ms  192.168.1.1"
+            # "  1    <1 毫秒   <1 毫秒   <1 毫秒  192.168.1.1"
             # "  2     *        *        *     Request timed out."
-            hop_re = re.compile(
+            # "  2     *        *        *     请求超时。"
+            win_hop_re = re.compile(
                 r"^\s*(\d+)\s+"
-                r"([<\d]+\s*ms|\*)\s+"
-                r"([<\d]+\s*ms|\*)\s+"
-                r"([<\d]+\s*ms|\*)\s+"
-                r"([\d.]+|(?:请求超时|Request timed out))"
+                r"([<\d]+\s*(?:ms|毫秒)|\*)\s+"
+                r"([<\d]+\s*(?:ms|毫秒)|\*)\s+"
+                r"([<\d]+\s*(?:ms|毫秒)|\*)\s+"
+                r"([\d.]+|(?:请求超时|Request timed out))",
+                re.IGNORECASE,
+            )
+
+            # Linux traceroute output patterns
+            # " 1  192.168.1.1  0.466 ms  0.526 ms  0.638 ms"
+            # " 2  * * *"
+            linux_hop_re = re.compile(
+                r"^\s*(\d+)\s+"
+                r"([\d.]+)\s+"
+                r"([\d.]+)\s*ms\s+"
+                r"([\d.]+)\s*ms\s+"
+                r"([\d.]+)\s*ms"
+            )
+            linux_timeout_re = re.compile(
+                r"^\s*(\d+)\s+\*"
             )
 
             start_time = time.time()
@@ -194,30 +223,68 @@ class PingTracer:
                 if not line:
                     continue
 
-                match = hop_re.search(line)
-                if match:
-                    hop_num = int(match.group(1))
-                    rtt1 = self._parse_rtt(match.group(2))
-                    rtt2 = self._parse_rtt(match.group(3))
-                    rtt3 = self._parse_rtt(match.group(4))
-                    ip = match.group(5)
-                    lost = ip in ("Request timed out", "请求超时")
+                if is_windows:
+                    match = win_hop_re.search(line)
+                    if match:
+                        hop_num = int(match.group(1))
+                        rtt1 = self._parse_rtt(match.group(2))
+                        rtt2 = self._parse_rtt(match.group(3))
+                        rtt3 = self._parse_rtt(match.group(4))
+                        ip = match.group(5)
+                        lost = ip in ("Request timed out", "请求超时")
 
-                    hop = TraceHop(
-                        hop=hop_num,
-                        ip="*" if lost else ip,
-                        hostname="*" if lost else ip,
-                        rtt1_ms=rtt1,
-                        rtt2_ms=rtt2,
-                        rtt3_ms=rtt3,
-                        lost=lost,
-                    )
-                    self.tracert_stats.hops.append(hop)
+                        hop = TraceHop(
+                            hop=hop_num,
+                            ip="*" if lost else ip,
+                            hostname="*" if lost else ip,
+                            rtt1_ms=rtt1,
+                            rtt2_ms=rtt2,
+                            rtt3_ms=rtt3,
+                            lost=lost,
+                        )
+                        self.tracert_stats.hops.append(hop)
+                else:
+                    match = linux_hop_re.search(line)
+                    if match:
+                        hop_num = int(match.group(1))
+                        ip = match.group(2)
+                        rtt1 = float(match.group(3))
+                        rtt2 = float(match.group(4))
+                        rtt3 = float(match.group(5))
+
+                        hop = TraceHop(
+                            hop=hop_num,
+                            ip=ip,
+                            hostname=ip,
+                            rtt1_ms=rtt1,
+                            rtt2_ms=rtt2,
+                            rtt3_ms=rtt3,
+                            lost=False,
+                        )
+                        self.tracert_stats.hops.append(hop)
+                    elif linux_timeout_re.search(line):
+                        hop_match = re.match(r"\s*(\d+)", line)
+                        if hop_match:
+                            hop = TraceHop(
+                                hop=int(hop_match.group(1)),
+                                ip="*",
+                                hostname="*",
+                                rtt1_ms=-1.0,
+                                rtt2_ms=-1.0,
+                                rtt3_ms=-1.0,
+                                lost=True,
+                            )
+                            self.tracert_stats.hops.append(hop)
 
             proc.wait(timeout=5)
             self.tracert_stats.done = True
         except FileNotFoundError:
-            self.tracert_stats.error = "tracert command not found"
+            if is_windows:
+                self.tracert_stats.error = "tracert command not found"
+            else:
+                self.tracert_stats.error = (
+                    "traceroute not found (install: apt install traceroute)"
+                )
         except subprocess.TimeoutExpired:
             proc.kill()
             self.tracert_stats.error = "tracert process did not exit cleanly"
@@ -231,9 +298,10 @@ class PingTracer:
     def _parse_rtt(value: str) -> float:
         if value.strip() == "*":
             return -1.0
-        num = re.search(r"(\d+)", value)
+        # Handle "<1 ms" / "<1 毫秒" — means less than 1ms
+        if "<" in value:
+            return 0.5
+        num = re.search(r"([\d.]+)", value)
         if num:
             return float(num.group(1))
-        if "<1" in value:
-            return 0.5
         return -1.0
