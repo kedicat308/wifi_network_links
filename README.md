@@ -83,12 +83,67 @@ Terminal-based网络诊断工具，集成 ping、tracert、iperf 带宽测试和
 
 显示多轮扫描中信号最强的前 8 个网络的信号强度变化趋势 (火花图)，用于观察信号是否随时间波动。
 
+## 数据上报 (Collection Server)
+
+支持多台客户端同时运行诊断并将结果集中收集到服务器上的一个 JSON 文件。
+
+### 服务端
+
+```bash
+# 在服务器上启动收集服务 (默认 10.216.65.91:62997)
+python server.py
+
+# 自定义地址/端口
+python server.py --host 0.0.0.0 --port 9999
+```
+
+服务端接口：
+
+| 端点 | 方法 | 说明 |
+|---|---|---|
+| `/report` | POST | 接收客户端上报的 JSON 诊断数据 |
+| `/` | GET | 查看已收集的客户端列表 |
+| `/data` | GET | 获取完整的 `network_inspect.json` 内容 |
+
+### 客户端上报
+
+诊断完成后自动将结果 POST 到服务器：
+
+```bash
+python main.py --report-server http://10.216.65.91:62997/report
+```
+
+### 数据格式
+
+所有上报数据保存在 `network_inspect.json`，以 `主机名:上报时间` 为 key：
+
+```json
+{
+  "PC-OFFICE-01:20260217_143052": {
+    "hostname": "PC-OFFICE-01",
+    "upload_time": "20260217_143052",
+    "ping": { "target": "10.216.65.91", "sent": 50, "loss_pct": 2.0, "avg_ms": 5.3, ... },
+    "tracert": { "target": "10.216.65.91", "hops": [...] },
+    "iperf": { "download": { "bandwidth_mbps": 93.8 }, "upload": { "bandwidth_mbps": 47.2 } },
+    "wifi": { "current": { "ssid": "OfficeNet", "signal_pct": 82, "channel": 36 }, ... }
+  },
+  "LAPTOP-MEET-02:20260217_143215": { ... }
+}
+```
+
+### 并发安全
+
+- 服务端使用 `threading.Lock` 保护文件读写，多客户端同时上报不会丢数据
+- 写入采用 write-tmp + `os.replace` 原子替换，避免写到一半崩溃导致文件损坏
+- 每个客户端以 `hostname:upload_time` 为唯一 key，同一台机器多次上报各自独立保存
+
 ## 项目结构
 
 ```
 wifi_network_links/
 ├── main.py                      # 入口 (iperf3 版本)
 ├── main_iperf2.py               # 入口 (iperf2 版本)
+├── server.py                    # 数据收集服务端
 ├── requirements.txt             # 依赖: rich>=13.0.0
 ├── wifi_diag.spec               # PyInstaller 打包 (iperf3)
 ├── wifi_diag_iperf2.spec        # PyInstaller 打包 (iperf2)
@@ -98,7 +153,8 @@ wifi_network_links/
     ├── iperf_tester.py          # iperf3 带宽测试 (JSON 解析)
     ├── iperf2_tester.py         # iperf2 带宽测试 (文本正则解析)
     ├── dashboard.py             # TUI 仪表板 (iperf3)
-    └── dashboard_iperf2.py      # TUI 仪表板 (iperf2)
+    ├── dashboard_iperf2.py      # TUI 仪表板 (iperf2)
+    └── reporter.py              # 客户端上报模块
 ```
 
 ## 两个版本对比
@@ -182,6 +238,7 @@ iperf -s -p 62998
 | `--no-iperf` | - | 跳过带宽测试 |
 | `--no-wifi` | - | 跳过 WiFi 扫描 |
 | `--no-reconnect` | - | 跳过 WiFi 断开/重连测试 |
+| `--report-server` | - | 上报服务器 URL (如 `http://10.216.65.91:62997/report`) |
 
 ## 测试流程
 

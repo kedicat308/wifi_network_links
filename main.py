@@ -25,6 +25,7 @@ from modules.ping_tracer import PingTracer
 from modules.iperf_tester import IperfTester
 from modules.wifi_scanner import WifiScanner
 from modules.dashboard import Dashboard
+from modules.reporter import upload_report
 
 
 def get_resource_path(relative: str = "") -> str:
@@ -131,6 +132,13 @@ Examples:
         "--no-reconnect",
         action="store_true",
         help="Skip WiFi disconnect/reconnect test",
+    )
+
+    # Report server
+    parser.add_argument(
+        "--report-server",
+        default=None,
+        help="Upload results to collection server (e.g. http://10.216.65.91:62997/report)",
     )
 
     args = parser.parse_args()
@@ -271,6 +279,17 @@ def main():
             info = wifi_scanner.stats.current
             print(f"  WiFi: {info.ssid} (Signal: {info.signal_pct}%, "
                   f"Channel: {info.channel})")
+
+        # Upload report to collection server
+        if args.report_server:
+            print(f"\n  Uploading report to {args.report_server} ...")
+            ok, msg = upload_report(
+                ping_tracer, iperf_tester, wifi_scanner, args.report_server,
+            )
+            if ok:
+                print(f"  {msg}")
+            else:
+                print(f"  Upload failed: {msg}")
         print()
 
 
