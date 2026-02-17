@@ -3,6 +3,7 @@
 import subprocess
 import json
 import os
+import sys
 import socket
 import time
 import threading
@@ -58,7 +59,8 @@ class IperfTester:
     """Runs iperf3 tests for bandwidth measurement."""
 
     def __init__(self, server: str, port: int = 5201, duration: int = 10,
-                 protocol: str = "tcp", bandwidth: str = "100M"):
+                 protocol: str = "tcp", bandwidth: str = "100M",
+                 iperf_path: str = ""):
         self.server = server
         self.port = port
         self.duration = duration
@@ -67,21 +69,39 @@ class IperfTester:
         self.stats = IperfStats(server=server, port=port)
         self._thread = None
         self._stop_event = threading.Event()
-        self._iperf_path = self._find_iperf3()
+        self._iperf_path = iperf_path if iperf_path else self._find_iperf3()
 
     def _find_iperf3(self) -> str:
-        """Find iperf3 executable in current directory or PATH."""
-        # Check current directory first
-        local_paths = [
-            os.path.join(os.getcwd(), "iperf3.exe"),
-            os.path.join(os.getcwd(), "iperf3"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "iperf3.exe"),
-            os.path.join(os.path.dirname(os.path.dirname(__file__)), "iperf3"),
-        ]
-        for p in local_paths:
+        """Find iperf3 executable.
+
+        Search order:
+        1. PyInstaller bundle (sys._MEIPASS) — for packaged .exe
+        2. Directory next to the .exe / main.py (app dir)
+        3. Project root (development)
+        4. Fall back to system PATH
+        """
+        candidates = []
+
+        # 1. PyInstaller bundle temp dir
+        if getattr(sys, "frozen", False):
+            candidates.append(os.path.join(sys._MEIPASS, "iperf3.exe"))
+            # Also check next to the .exe itself
+            exe_dir = os.path.dirname(sys.executable)
+            candidates.append(os.path.join(exe_dir, "iperf3.exe"))
+        else:
+            # 2. Project root (where main.py lives)
+            project_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+            candidates.append(os.path.join(project_root, "iperf3.exe"))
+            candidates.append(os.path.join(project_root, "iperf3"))
+
+        # 3. Current working directory
+        candidates.append(os.path.join(os.getcwd(), "iperf3.exe"))
+        candidates.append(os.path.join(os.getcwd(), "iperf3"))
+
+        for p in candidates:
             if os.path.isfile(p):
                 return p
-        # Fallback to PATH
+        # 4. Fallback to PATH
         return "iperf3"
 
     def start(self):

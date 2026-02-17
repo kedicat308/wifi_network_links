@@ -16,6 +16,8 @@ Requirements:
 """
 
 import argparse
+import configparser
+import os
 import sys
 import threading
 import time
@@ -26,7 +28,53 @@ from modules.wifi_scanner import WifiScanner
 from modules.dashboard import Dashboard
 
 
+def get_resource_path(relative: str = "") -> str:
+    """Return the path to bundled resources (iperf3.exe, cygwin1.dll, etc.).
+
+    When running as a PyInstaller --onefile bundle, data files are extracted
+    to a temporary ``sys._MEIPASS`` directory.  During normal development the
+    resources live next to main.py (the project root).
+    """
+    if getattr(sys, "frozen", False):
+        base = sys._MEIPASS
+    else:
+        base = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base, relative) if relative else base
+
+
+def get_app_dir() -> str:
+    """Return the directory where the .exe (or main.py) lives.
+
+    On the target machine this is where config.ini should be placed.
+    """
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+def load_config() -> dict:
+    """Load settings from config.ini next to the executable (if present).
+
+    Returns a flat dict of key-value pairs.  Missing file → empty dict.
+    """
+    cfg_path = os.path.join(get_app_dir(), "config.ini")
+    if not os.path.isfile(cfg_path):
+        return {}
+
+    cp = configparser.ConfigParser()
+    cp.read(cfg_path, encoding="utf-8")
+
+    result = {}
+    for section in cp.sections():
+        for key, value in cp.items(section):
+            result[key] = value
+    return result
+
+
 def parse_args():
+    # Load config.ini defaults first (CLI args override them)
+    cfg = load_config()
+
     parser = argparse.ArgumentParser(
         description="WiFi Network Diagnostics - Terminal Dashboard",
         formatter_class=argparse.RawDescriptionHelpFormatter,
@@ -37,66 +85,70 @@ Examples:
   python main.py --target 10.216.65.91 --iperf-server 192.168.1.100  (separate IPs)
   python main.py --target 10.216.65.91 --iperf-port 5201 --iperf-proto udp
   python main.py --no-wifi --target 10.216.65.91
+
+Settings can also be placed in a config.ini file next to the executable.
+Command-line arguments always override config.ini values.
 """,
     )
 
     # Ping / Tracert
     parser.add_argument(
         "--target", "-t",
-        default="10.216.65.91",
+        default=cfg.get("target", "10.216.65.91"),
         help="Target host for ping, tracert, and iperf (default: 10.216.65.91)",
     )
     parser.add_argument(
         "--ping-count", "-n",
         type=int,
-        default=50,
+        default=int(cfg.get("ping_count", 50)),
         help="Number of ping packets (default: 50)",
     )
     parser.add_argument(
         "--tracert-max-hops",
         type=int,
-        default=15,
+        default=int(cfg.get("tracert_max_hops", 15)),
         help="Max hops for tracert (default: 15)",
     )
     parser.add_argument(
         "--tracert-timeout",
         type=int,
-        default=30,
+        default=int(cfg.get("tracert_timeout", 30)),
         help="Overall tracert timeout in seconds (default: 30)",
     )
 
     # iperf3
     parser.add_argument(
         "--iperf-server", "-s",
-        default=None,
+        default=cfg.get("iperf_server"),
         help="iperf3 server address (default: same as --target)",
     )
     parser.add_argument(
         "--iperf-port",
         type=int,
-        default=60998,
+        default=int(cfg.get("iperf_port", 60998)),
         help="iperf3 server port (default: 60998)",
     )
     parser.add_argument(
         "--iperf-duration",
         type=int,
-        default=10,
+        default=int(cfg.get("iperf_duration", 10)),
         help="iperf3 test duration in seconds (default: 10)",
     )
     parser.add_argument(
         "--iperf-proto",
         choices=["tcp", "udp"],
-        default="tcp",
+        default=cfg.get("iperf_proto", "tcp"),
         help="iperf3 protocol: tcp or udp (default: tcp)",
     )
     parser.add_argument(
         "--iperf-bandwidth",
-        default="100M",
+        default=cfg.get("iperf_bandwidth", "100M"),
         help="iperf3 UDP target bandwidth (default: 100M, only for UDP)",
     )
     parser.add_argument(
         "--no-iperf",
         action="store_true",
+        default=cfg.get("no_iperf", "").lower() in ("true", "1", "yes"),
         help="Skip iperf3 bandwidth test",
     )
 
@@ -104,17 +156,19 @@ Examples:
     parser.add_argument(
         "--no-wifi",
         action="store_true",
+        default=cfg.get("no_wifi", "").lower() in ("true", "1", "yes"),
         help="Skip WiFi scanning (for non-WiFi connections)",
     )
     parser.add_argument(
         "--wifi-scans",
         type=int,
-        default=5,
+        default=int(cfg.get("wifi_scans", 5)),
         help="Number of WiFi scan iterations (default: 5)",
     )
     parser.add_argument(
         "--no-reconnect",
         action="store_true",
+        default=cfg.get("no_reconnect", "").lower() in ("true", "1", "yes"),
         help="Skip WiFi disconnect/reconnect test",
     )
 
@@ -150,12 +204,18 @@ def main():
 
     iperf_tester = None
     if not args.no_iperf:
+        # Resolve iperf3 path: bundled resource (PyInstaller) or local file
+        iperf_exe = get_resource_path("iperf3.exe")
+        if not os.path.isfile(iperf_exe):
+            iperf_exe = ""  # let IperfTester auto-detect
+
         iperf_tester = IperfTester(
             server=args.iperf_server,
             port=args.iperf_port,
             duration=args.iperf_duration,
             protocol=args.iperf_proto,
             bandwidth=args.iperf_bandwidth,
+            iperf_path=iperf_exe,
         )
 
     wifi_scanner = None
