@@ -53,42 +53,56 @@ wifi_network_links/
 
 **ping、tracert、WiFi 扫描模块两个版本完全共用。**
 
-## 快速使用
+## 使用方式
 
-### 安装依赖
+### 方式一：直接运行 .exe（推荐，目标电脑无需安装任何东西）
+
+通过 PyInstaller 打包后，生成的 `.exe` 是单文件可执行程序，已内含 Python 运行时、rich 库和 iperf 二进制。
+目标电脑**不需要安装 Python、pip 或任何依赖**，双击即可运行。
+
+```bash
+# 直接运行
+wifi_diag.exe
+wifi_diag.exe --target 192.168.1.1
+wifi_diag.exe --no-wifi
+
+# iperf2 版本
+wifi_diag_iperf2.exe
+wifi_diag_iperf2.exe --target 192.168.1.1
+```
+
+打包方法见下方 [打包为 .exe](#打包为-exe) 章节。
+
+### 方式二：源码运行（开发/调试用）
+
+需要 Python 3.10+ 环境：
 
 ```bash
 pip install rich
 ```
 
-### 运行 (iperf3 版本)
-
 ```bash
-# 服务端
-iperf3 -s -p 60998
-
-# 客户端 (使用默认 IP 10.216.65.91)
+# iperf3 版本
 python main.py
-
-# 指定目标
 python main.py --target 192.168.1.1
-
-# 单独指定 iperf 服务器
 python main.py --target 10.216.65.91 --iperf-server 192.168.1.100
-
-# 跳过 WiFi 扫描 (有线环境)
 python main.py --no-wifi
-```
 
-### 运行 (iperf2 版本)
-
-```bash
-# 服务端
-iperf -s -p 62998
-
-# 客户端
+# iperf2 版本
 python main_iperf2.py
 python main_iperf2.py --target 192.168.1.1
+```
+
+### 服务端
+
+测试前需在服务器上启动 iperf 服务：
+
+```bash
+# iperf3 版本
+iperf3 -s -p 60998
+
+# iperf2 版本
+iperf -s -p 62998
 ```
 
 ### 命令行参数
