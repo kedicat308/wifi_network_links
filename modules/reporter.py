@@ -6,20 +6,25 @@ and uploads the report to the collection server via HTTP POST.
 """
 
 import json
+import os
 import socket
 import urllib.request
 import urllib.error
-from dataclasses import asdict
 from datetime import datetime
+
+
+def _get_client_name() -> str:
+    """Return USERNAME env var if available, otherwise hostname."""
+    return os.environ.get("USERNAME") or socket.gethostname()
 
 
 def _build_report(ping_tracer, iperf_tester, wifi_scanner) -> dict:
     """Collect all module stats into a single serializable dict."""
-    hostname = socket.gethostname()
+    client_name = _get_client_name()
     upload_time = datetime.now().strftime("%Y%m%d_%H%M%S")
 
     report = {
-        "hostname": hostname,
+        "hostname": client_name,
         "upload_time": upload_time,
         "ping": _serialize_ping(ping_tracer),
         "tracert": _serialize_tracert(ping_tracer),
