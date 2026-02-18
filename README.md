@@ -90,11 +90,11 @@ Terminal-based网络诊断工具，集成 ping、tracert、iperf 带宽测试和
 ### 服务端
 
 ```bash
-# 在服务器上启动收集服务 (默认 10.216.65.91:62997)
+# 在服务器上启动收集服务 (默认 0.0.0.0:62997, 监听所有网卡)
 python server.py
 
-# 自定义地址/端口
-python server.py --host 0.0.0.0 --port 9999
+# 绑定指定 IP / 自定义端口
+python server.py --host 10.216.65.91 --port 9999
 
 # 自定义日志文件路径
 python server.py --log /var/log/server_log.log
@@ -104,7 +104,7 @@ python server.py --log /var/log/server_log.log
 
 | 参数 | 默认值 | 说明 |
 |---|---|---|
-| `--host` | `10.216.65.91` | 监听地址 |
+| `--host` | `0.0.0.0` | 监听地址 (默认监听所有网卡) |
 | `--port` | `62997` | 监听端口 |
 | `--output` | `network_inspect.json` | 数据输出文件路径 |
 | `--log` | `server_log.log` | 日志文件路径 |

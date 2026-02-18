@@ -8,8 +8,8 @@ file.  Each client entry is keyed by ``hostname:upload_time`` so concurrent
 writes from different machines never collide.
 
 Usage:
-    python server.py                        (default: 10.216.65.91:62997)
-    python server.py --host 0.0.0.0         (listen on all interfaces)
+    python server.py                        (default: 0.0.0.0:62997, listen on all interfaces)
+    python server.py --host 10.216.65.91    (bind to specific IP)
     python server.py --port 9999            (custom port)
 
 Clients POST JSON to ``/report``.  The server responds with 200 on success.
@@ -26,7 +26,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 
 # ---------- configuration ----------
 
-DEFAULT_HOST = "10.216.65.91"
+DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 62997
 DATA_FILE = "network_inspect.json"
 LOG_FILE = "server_log.log"
