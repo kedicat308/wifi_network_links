@@ -108,21 +108,19 @@ python server.py --log /var/log/server_log.log
 | `--port` | `62997` | 监听端口 |
 | `--output` | `network_inspect.json` | 数据输出文件路径 |
 | `--log` | `server_log.log` | 日志文件路径 |
-| `--iperf-instances` | `1` | iperf3 进程池实例数 (0 = 不启用) |
-| `--iperf-base-port` | `60998` | iperf3 起始端口 |
-| `--iperf-timeout` | `120` | 端口分配超时自动释放 (秒) |
-| `--iperf-path` | `iperf3` | iperf3 可执行文件路径 |
+| `--iperf-port` | `60998` | iperf3 端口 (用于客户端排队锁) |
+| `--iperf-timeout` | `120` | 端口锁超时自动释放 (秒) |
 
 服务端接口：
 
 | 端点 | 方法 | 说明 |
 |---|---|---|
 | `/report` | POST | 接收客户端上报的 JSON 诊断数据 |
-| `/` | GET | 查看已收集的客户端列表 + iperf3 池状态 |
+| `/` | GET | 查看已收集的客户端列表 + iperf3 端口状态 |
 | `/data` | GET | 获取完整的 `network_inspect.json` 内容 |
-| `/iperf-port` | GET | 申请一个空闲的 iperf3 端口 |
-| `/iperf-release/<port>` | GET | 释放已分配的端口 |
-| `/iperf-status` | GET | 查看 iperf3 池所有端口状态 |
+| `/iperf-port` | GET | 申请 iperf3 端口锁 (被占用时返回 503) |
+| `/iperf-release/<port>` | GET | 释放端口锁 |
+| `/iperf-status` | GET | 查看 iperf3 端口锁状态 |
 
 ### 客户端上报
 
@@ -179,24 +177,18 @@ python main.py --report-server http://10.216.65.91:62997/report
 - 写入采用 write-tmp + `os.replace` 原子替换，避免写到一半崩溃导致文件损坏
 - 每个客户端以 `hostname:upload_time` 为唯一 key，同一台机器多次上报各自独立保存
 
-### iperf3 并发支持
+### iperf3 排队机制
 
 iperf3 单实例同一时间只能服务一个客户端。当多人同时测试时，后发起的连接会被 RST。
 
-**解决方案**：server.py 内置 iperf3 进程池，自动管理多个 iperf3 实例：
+**解决方案**：server.py 内置端口锁，iperf3 仍由用户自行启动，server.py 负责排队：
 
-```bash
-# 启动 4 个 iperf3 实例 (最多 4 人同时测试)
-python server.py --iperf-instances 4
-```
-
-工作流程：
-1. 服务端启动时，在端口 60998、60999、61000、61001 各启动一个 iperf3 进程
-2. 客户端测试前自动调用 `GET /iperf-port` 申请空闲端口
-3. 服务端分配一个空闲端口并标记为占用
-4. 客户端测试完成后调用 `/iperf-release/<port>` 释放端口
-5. 即使客户端异常退出，端口也会在超时后自动释放 (默认 120 秒)
-6. 服务端自动监控 iperf3 进程健康状态，崩溃后自动重启
+1. 用户在 Linux 上手动启动 `iperf3 -s -p 60998`
+2. 客户端测试前自动调用 `GET /iperf-port` 申请端口锁
+3. 如果锁空闲，返回端口号，客户端开始测试
+4. 如果锁被占用，客户端自动等待轮询，直到前一个人测完
+5. 客户端测试完成后调用 `/iperf-release/<port>` 释放锁
+6. 即使客户端异常退出，锁也会在超时后自动释放 (默认 120 秒)
 
 ## 项目结构
 
@@ -273,24 +265,17 @@ python main_iperf2.py --target 192.168.1.1
 
 ### 服务端
 
-测试前需在服务器上启动 iperf 服务。推荐使用 **server.py 内置进程池**（支持多人并发）：
+测试前需在服务器上手动启动 iperf 服务：
 
 ```bash
-# 推荐：server.py 统一管理 iperf3 进程池 (4 个实例，端口 60998-61001)
-python server.py --iperf-instances 4
-
-# 客户端会自动从服务端申请空闲端口，无需手动指定 --iperf-port
-```
-
-如果不使用进程池，也可以手动启动单实例（但同一时间只能 1 人测试）：
-
-```bash
-# iperf3 手动启动 (单实例，不支持并发)
+# iperf3 版本
 iperf3 -s -p 60998
 
 # iperf2 版本
 iperf -s -p 62998
 ```
+
+server.py 内置排队锁，多人同时测试时客户端会自动排队等待，不会被 RST。
 
 ### 命令行参数
 

@@ -7,19 +7,14 @@ from multiple clients, and merges them into a single ``network_inspect.json``
 file.  Each client entry is keyed by ``hostname:upload_time`` so concurrent
 writes from different machines never collide.
 
-Optionally manages a **pool of iperf3 server processes** so that multiple
-clients can run bandwidth tests concurrently.  Clients call
-``GET /iperf-port`` to obtain an exclusive port before starting their
-iperf3 test.
+Also provides a logical **port lock** for the externally-managed iperf3
+server so that multiple clients queue instead of getting RST.  Clients
+call ``GET /iperf-port`` to acquire the lock before testing.
 
 Usage:
     python server.py                        (default: 0.0.0.0:62997, listen on all interfaces)
     python server.py --host 10.216.65.91    (bind to specific IP)
     python server.py --port 9999            (custom port)
-
-    # With iperf3 pool (start 4 instances on ports 60998-61001):
-    python server.py --iperf-instances 4
-    python server.py --iperf-instances 4 --iperf-base-port 60998
 
 Clients POST JSON to ``/report``.  The server responds with 200 on success.
 """
@@ -28,7 +23,6 @@ import argparse
 import json
 import logging
 import os
-import subprocess
 import sys
 import threading
 import time
@@ -103,150 +97,80 @@ def merge_report(path: str, report: dict) -> str:
     return key
 
 
-# ---------- iperf3 process pool ----------
+# ---------- iperf3 port lock ----------
 
-class IperfPool:
-    """Manage a pool of iperf3 server processes on consecutive ports.
+class IperfLock:
+    """Logical lock for the externally-managed iperf3 server port.
 
-    Each port is either *free* or *busy* (allocated to a client).  Busy
-    ports auto-release after *timeout* seconds so that crashed clients
-    never permanently hold a slot.
+    The iperf3 process is started by the user separately (e.g.
+    ``iperf3 -s -p 60998``).  This class only tracks whether a client
+    is currently using the port so that other clients wait their turn
+    instead of getting RST.  Busy ports auto-release after *timeout*
+    seconds in case a client crashes.
     """
 
-    def __init__(self, base_port: int, count: int, timeout: int,
-                 iperf_path: str = "iperf3"):
-        self._base_port = base_port
-        self._count = count
+    def __init__(self, port: int, timeout: int):
+        self._port = port
         self._timeout = timeout
-        self._iperf_path = iperf_path
-        # port -> {"proc": Popen, "busy": bool, "client": str, "ts": float}
-        self._slots: dict[int, dict] = {}
         self._lock = threading.Lock()
-        self._reaper: threading.Thread | None = None
+        self._busy = False
+        self._client = ""
+        self._ts = 0.0
         self._stop = threading.Event()
-
-    # -- lifecycle --
+        self._reaper = threading.Thread(target=self._reap_loop, daemon=True)
 
     def start(self):
-        """Launch iperf3 processes and the reaper thread."""
-        for i in range(self._count):
-            port = self._base_port + i
-            proc = self._spawn(port)
-            if proc is None:
-                logger.error("Failed to start iperf3 on port %d", port)
-                continue
-            self._slots[port] = {
-                "proc": proc, "busy": False, "client": "", "ts": 0.0,
-            }
-            logger.info("iperf3 started on port %d (pid %d)", port, proc.pid)
-
-        if not self._slots:
-            logger.error("No iperf3 instances started — pool disabled")
-            return
-
-        self._reaper = threading.Thread(target=self._reap_loop, daemon=True)
         self._reaper.start()
+        logger.info("iperf3 lock enabled for port %d (timeout %ds)",
+                     self._port, self._timeout)
 
     def stop(self):
-        """Terminate all iperf3 processes."""
         self._stop.set()
-        for port, slot in self._slots.items():
-            proc = slot["proc"]
-            if proc and proc.poll() is None:
-                proc.terminate()
-                try:
-                    proc.wait(timeout=5)
-                except subprocess.TimeoutExpired:
-                    proc.kill()
-                logger.info("iperf3 on port %d stopped", port)
-
-    def _spawn(self, port: int) -> subprocess.Popen | None:
-        try:
-            return subprocess.Popen(
-                [self._iperf_path, "-s", "-p", str(port)],
-                stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL,
-                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
-            )
-        except FileNotFoundError:
-            logger.error("iperf3 not found: %s", self._iperf_path)
-            return None
-        except OSError as e:
-            logger.error("Failed to spawn iperf3 on port %d: %s", port, e)
-            return None
-
-    # -- allocation --
 
     def allocate(self, client: str) -> int | None:
-        """Return a free port or None if all busy."""
+        """Return the port if free, or None if busy."""
         with self._lock:
-            for port, slot in self._slots.items():
-                if not slot["busy"]:
-                    # Ensure process is still alive; restart if needed
-                    if slot["proc"].poll() is not None:
-                        logger.warning("iperf3 on port %d died, restarting", port)
-                        proc = self._spawn(port)
-                        if proc is None:
-                            continue
-                        slot["proc"] = proc
-                        time.sleep(0.5)  # give it a moment to bind
-                    slot["busy"] = True
-                    slot["client"] = client
-                    slot["ts"] = time.time()
-                    logger.info("ALLOC  port %d -> %s", port, client)
-                    return port
+            if not self._busy:
+                self._busy = True
+                self._client = client
+                self._ts = time.time()
+                logger.info("ALLOC  port %d -> %s", self._port, client)
+                return self._port
         return None
 
     def release(self, port: int):
-        """Mark *port* as free again."""
         with self._lock:
-            slot = self._slots.get(port)
-            if slot and slot["busy"]:
-                logger.info("RELEASE  port %d (was %s)", port, slot["client"])
-                slot["busy"] = False
-                slot["client"] = ""
-                slot["ts"] = 0.0
+            if port == self._port and self._busy:
+                logger.info("RELEASE  port %d (was %s)", self._port, self._client)
+                self._busy = False
+                self._client = ""
+                self._ts = 0.0
 
-    def status(self) -> list[dict]:
-        """Return a snapshot of all slots for the status page."""
+    def status(self) -> dict:
         with self._lock:
-            out = []
-            for port in sorted(self._slots):
-                s = self._slots[port]
-                out.append({
-                    "port": port,
-                    "busy": s["busy"],
-                    "client": s["client"],
-                    "alive": s["proc"].poll() is None,
-                })
-            return out
-
-    # -- reaper: auto-release expired allocations --
+            return {
+                "port": self._port,
+                "busy": self._busy,
+                "client": self._client,
+            }
 
     def _reap_loop(self):
         while not self._stop.is_set():
-            self._stop.wait(10)  # check every 10s
+            self._stop.wait(10)
             now = time.time()
             with self._lock:
-                for port, slot in self._slots.items():
-                    if slot["busy"] and (now - slot["ts"]) > self._timeout:
-                        logger.warning(
-                            "TIMEOUT  port %d held by %s for %ds — auto-releasing",
-                            port, slot["client"], int(now - slot["ts"]),
-                        )
-                        slot["busy"] = False
-                        slot["client"] = ""
-                        slot["ts"] = 0.0
-                    # Also restart dead processes
-                    if slot["proc"].poll() is not None:
-                        logger.warning("iperf3 on port %d died, restarting", port)
-                        proc = self._spawn(port)
-                        if proc:
-                            slot["proc"] = proc
+                if self._busy and (now - self._ts) > self._timeout:
+                    logger.warning(
+                        "TIMEOUT  port %d held by %s for %ds — auto-releasing",
+                        self._port, self._client, int(now - self._ts),
+                    )
+                    self._busy = False
+                    self._client = ""
+                    self._ts = 0.0
 
 
-# Module-level pool reference, set in main()
-_iperf_pool: IperfPool | None = None
+# Module-level lock reference, set in main()
+_iperf_lock: IperfLock | None = None
 
 
 # ---------- HTTP handler ----------
@@ -279,19 +203,12 @@ class ReportHandler(BaseHTTPRequestHandler):
 
         # ---- iperf port allocation ----
         if self.path == "/iperf-port":
-            if _iperf_pool is None:
-                self._json_response(503, {
-                    "error": "iperf3 pool not enabled on this server"
-                })
-                logger.warning("FAIL  %s  GET /iperf-port  503 pool disabled",
-                               self._client())
-                return
-            port = _iperf_pool.allocate(self._client_ip())
+            port = _iperf_lock.allocate(self._client_ip())
             if port is None:
                 self._json_response(503, {
-                    "error": "all iperf3 ports are busy, try again later"
+                    "error": "iperf3 port is busy, try again later"
                 })
-                logger.warning("FAIL  %s  GET /iperf-port  503 all busy",
+                logger.warning("FAIL  %s  GET /iperf-port  503 busy",
                                self._client())
                 return
             self._json_response(200, {"port": port})
@@ -300,29 +217,19 @@ class ReportHandler(BaseHTTPRequestHandler):
 
         # ---- iperf port release ----
         if self.path.startswith("/iperf-release/"):
-            if _iperf_pool is None:
-                self._json_response(503, {
-                    "error": "iperf3 pool not enabled on this server"
-                })
-                return
             try:
                 port = int(self.path.split("/")[-1])
             except ValueError:
                 self._json_response(400, {"error": "invalid port"})
                 return
-            _iperf_pool.release(port)
+            _iperf_lock.release(port)
             self._json_response(200, {"status": "released", "port": port})
             logger.info("SUCCESS  %s  GET /iperf-release/%d", self._client(), port)
             return
 
-        # ---- iperf pool status ----
+        # ---- iperf status ----
         if self.path == "/iperf-status":
-            if _iperf_pool is None:
-                self._json_response(503, {
-                    "error": "iperf3 pool not enabled on this server"
-                })
-                return
-            self._json_response(200, {"slots": _iperf_pool.status()})
+            self._json_response(200, _iperf_lock.status())
             logger.info("SUCCESS  %s  GET /iperf-status", self._client())
             return
 
@@ -350,13 +257,11 @@ class ReportHandler(BaseHTTPRequestHandler):
             "",
             f"Clients:\n{clients}",
         ]
-        if _iperf_pool is not None:
+        if _iperf_lock is not None:
+            s = _iperf_lock.status()
+            state = f"BUSY ({s['client']})" if s["busy"] else "free"
             lines.append("")
-            lines.append("iperf3 pool:")
-            for s in _iperf_pool.status():
-                state = f"BUSY ({s['client']})" if s["busy"] else "free"
-                alive = "up" if s["alive"] else "DOWN"
-                lines.append(f"  port {s['port']}  [{alive}]  {state}")
+            lines.append(f"iperf3 port {s['port']}: {state}")
         body = ("\n".join(lines) + "\n").encode("utf-8")
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -436,29 +341,21 @@ def parse_args():
     parser.add_argument("--output", default=DATA_FILE, help=f"Output JSON file (default: {DATA_FILE})")
     parser.add_argument("--log", default=LOG_FILE, help=f"Log file path (default: {LOG_FILE})")
 
-    # iperf3 pool
+    # iperf3 port lock (iperf3 is started separately by the user)
     parser.add_argument(
-        "--iperf-instances", type=int, default=1,
-        help="Number of iperf3 server instances to manage (0 = disabled, default: 1)",
-    )
-    parser.add_argument(
-        "--iperf-base-port", type=int, default=60998,
-        help="Starting port for iperf3 pool (default: 60998)",
+        "--iperf-port", type=int, default=60998,
+        help="iperf3 port to manage for client queuing (default: 60998)",
     )
     parser.add_argument(
         "--iperf-timeout", type=int, default=120,
-        help="Auto-release iperf3 port after N seconds (default: 120)",
-    )
-    parser.add_argument(
-        "--iperf-path", default="iperf3",
-        help="Path to iperf3 executable (default: iperf3)",
+        help="Auto-release iperf3 port lock after N seconds (default: 120)",
     )
     return parser.parse_args()
 
 
 def main():
     args = parse_args()
-    global DATA_FILE, _iperf_pool
+    global DATA_FILE, _iperf_lock
     DATA_FILE = args.output
 
     # Update file handler path if user changed --log
@@ -468,15 +365,12 @@ def main():
     fh.setFormatter(_log_fmt)
     logger.addHandler(fh)
 
-    # Start iperf3 pool if configured
-    if args.iperf_instances > 0:
-        _iperf_pool = IperfPool(
-            base_port=args.iperf_base_port,
-            count=args.iperf_instances,
-            timeout=args.iperf_timeout,
-            iperf_path=args.iperf_path,
-        )
-        _iperf_pool.start()
+    # Start iperf3 port lock for client queuing
+    _iperf_lock = IperfLock(
+        port=args.iperf_port,
+        timeout=args.iperf_timeout,
+    )
+    _iperf_lock.start()
 
     server = ThreadedHTTPServer((args.host, args.port), ReportHandler)
     print()
@@ -488,36 +382,24 @@ def main():
     print(f"  POST endpoint : http://{args.host}:{args.port}/report")
     print(f"  GET  status   : http://{args.host}:{args.port}/")
     print(f"  GET  JSON     : http://{args.host}:{args.port}/data")
-    if _iperf_pool is not None:
-        port_end = args.iperf_base_port + args.iperf_instances - 1
-        print()
-        print(f"  iperf3 pool   : {args.iperf_instances} instances "
-              f"(ports {args.iperf_base_port}-{port_end})")
-        print(f"  iperf3 alloc  : GET http://{args.host}:{args.port}/iperf-port")
-        print(f"  iperf3 release: GET http://{args.host}:{args.port}/iperf-release/<port>")
-        print(f"  iperf3 status : GET http://{args.host}:{args.port}/iperf-status")
-        print(f"  iperf3 timeout: {args.iperf_timeout}s")
-    else:
-        print()
-        print("  iperf3 pool   : disabled (use --iperf-instances N to enable)")
+    print()
+    print(f"  iperf3 lock   : port {args.iperf_port} (timeout {args.iperf_timeout}s)")
+    print(f"  iperf3 alloc  : GET http://{args.host}:{args.port}/iperf-port")
+    print(f"  iperf3 release: GET http://{args.host}:{args.port}/iperf-release/{args.iperf_port}")
     print()
     print("  Waiting for client reports... (Ctrl+C to stop)")
     print()
 
     logger.info("Server started on %s:%d", args.host, args.port)
-    if _iperf_pool:
-        logger.info("iperf3 pool: %d instances on ports %d-%d (timeout %ds)",
-                     args.iperf_instances, args.iperf_base_port,
-                     args.iperf_base_port + args.iperf_instances - 1,
-                     args.iperf_timeout)
+    logger.info("iperf3 lock: port %d (timeout %ds)",
+                 args.iperf_port, args.iperf_timeout)
 
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         logger.info("Server shutting down (Ctrl+C)")
         print("\n  Server shutting down.")
-        if _iperf_pool:
-            _iperf_pool.stop()
+        _iperf_lock.stop()
         server.shutdown()
 
 
