@@ -12,7 +12,7 @@ server so that multiple clients queue instead of getting RST.  Clients
 call ``GET /iperf-port`` to acquire the lock before testing.
 
 Usage:
-    python server.py                        (default: 0.0.0.0:62997, listen on all interfaces)
+    python server.py                        (default: 0.0.0.0:8888, listen on all interfaces)
     python server.py --host 10.216.65.91    (bind to specific IP)
     python server.py --port 9999            (custom port)
 
@@ -32,7 +32,7 @@ from http.server import HTTPServer, BaseHTTPRequestHandler
 # ---------- configuration ----------
 
 DEFAULT_HOST = "0.0.0.0"
-DEFAULT_PORT = 62997
+DEFAULT_PORT = 8888
 DATA_FILE = "network_inspect.json"
 LOG_FILE = "server_log.log"
 
