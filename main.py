@@ -178,6 +178,15 @@ def main():
         if not os.path.isfile(iperf_exe):
             iperf_exe = ""  # let IperfTester auto-detect
 
+        # Derive iperf3 pool allocation URL from report-server.
+        # report-server is like "http://host:port/report"; we need "http://host:port"
+        alloc_url = ""
+        if args.report_server:
+            # Strip trailing path (e.g. /report) to get base URL
+            from urllib.parse import urlparse, urlunparse
+            parsed = urlparse(args.report_server)
+            alloc_url = urlunparse((parsed.scheme, parsed.netloc, "", "", "", ""))
+
         iperf_tester = IperfTester(
             server=args.iperf_server,
             port=args.iperf_port,
@@ -185,6 +194,7 @@ def main():
             protocol=args.iperf_proto,
             bandwidth=args.iperf_bandwidth,
             iperf_path=iperf_exe,
+            alloc_url=alloc_url,
         )
 
     wifi_scanner = None

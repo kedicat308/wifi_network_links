@@ -108,14 +108,21 @@ python server.py --log /var/log/server_log.log
 | `--port` | `62997` | 监听端口 |
 | `--output` | `network_inspect.json` | 数据输出文件路径 |
 | `--log` | `server_log.log` | 日志文件路径 |
+| `--iperf-instances` | `0` | iperf3 进程池实例数 (0 = 不启用) |
+| `--iperf-base-port` | `60998` | iperf3 起始端口 |
+| `--iperf-timeout` | `120` | 端口分配超时自动释放 (秒) |
+| `--iperf-path` | `iperf3` | iperf3 可执行文件路径 |
 
 服务端接口：
 
 | 端点 | 方法 | 说明 |
 |---|---|---|
 | `/report` | POST | 接收客户端上报的 JSON 诊断数据 |
-| `/` | GET | 查看已收集的客户端列表 |
+| `/` | GET | 查看已收集的客户端列表 + iperf3 池状态 |
 | `/data` | GET | 获取完整的 `network_inspect.json` 内容 |
+| `/iperf-port` | GET | 申请一个空闲的 iperf3 端口 |
+| `/iperf-release/<port>` | GET | 释放已分配的端口 |
+| `/iperf-status` | GET | 查看 iperf3 池所有端口状态 |
 
 ### 客户端上报
 
@@ -171,6 +178,25 @@ python main.py --report-server http://10.216.65.91:62997/report
 - 服务端使用 `threading.Lock` 保护文件读写，多客户端同时上报不会丢数据
 - 写入采用 write-tmp + `os.replace` 原子替换，避免写到一半崩溃导致文件损坏
 - 每个客户端以 `hostname:upload_time` 为唯一 key，同一台机器多次上报各自独立保存
+
+### iperf3 并发支持
+
+iperf3 单实例同一时间只能服务一个客户端。当多人同时测试时，后发起的连接会被 RST。
+
+**解决方案**：server.py 内置 iperf3 进程池，自动管理多个 iperf3 实例：
+
+```bash
+# 启动 4 个 iperf3 实例 (最多 4 人同时测试)
+python server.py --iperf-instances 4
+```
+
+工作流程：
+1. 服务端启动时，在端口 60998、60999、61000、61001 各启动一个 iperf3 进程
+2. 客户端测试前自动调用 `GET /iperf-port` 申请空闲端口
+3. 服务端分配一个空闲端口并标记为占用
+4. 客户端测试完成后调用 `/iperf-release/<port>` 释放端口
+5. 即使客户端异常退出，端口也会在超时后自动释放 (默认 120 秒)
+6. 服务端自动监控 iperf3 进程健康状态，崩溃后自动重启
 
 ## 项目结构
 
@@ -247,10 +273,19 @@ python main_iperf2.py --target 192.168.1.1
 
 ### 服务端
 
-测试前需在服务器上启动 iperf 服务：
+测试前需在服务器上启动 iperf 服务。推荐使用 **server.py 内置进程池**（支持多人并发）：
 
 ```bash
-# iperf3 版本
+# 推荐：server.py 统一管理 iperf3 进程池 (4 个实例，端口 60998-61001)
+python server.py --iperf-instances 4
+
+# 客户端会自动从服务端申请空闲端口，无需手动指定 --iperf-port
+```
+
+如果不使用进程池，也可以手动启动单实例（但同一时间只能 1 人测试）：
+
+```bash
+# iperf3 手动启动 (单实例，不支持并发)
 iperf3 -s -p 60998
 
 # iperf2 版本
