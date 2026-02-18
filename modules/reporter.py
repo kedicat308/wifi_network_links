@@ -12,6 +12,8 @@ import urllib.request
 import urllib.error
 from datetime import datetime
 
+DEFAULT_REPORT_URL = "http://10.216.65.91:62998/report"
+
 
 def _get_client_name() -> str:
     """Return USERNAME env var if available, otherwise hostname."""
@@ -177,7 +179,7 @@ def upload_report(ping_tracer, iperf_tester, wifi_scanner,
         ping_tracer: PingTracer instance (required).
         iperf_tester: IperfTester instance or None.
         wifi_scanner: WifiScanner instance or None.
-        server_url: Full URL, e.g. ``http://10.216.65.91:62997/report``.
+        server_url: Full URL, e.g. ``http://10.216.65.91:62998/report``.
 
     Returns:
         (success: bool, message: str)

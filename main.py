@@ -25,7 +25,7 @@ from modules.ping_tracer import PingTracer
 from modules.iperf_tester import IperfTester
 from modules.wifi_scanner import WifiScanner
 from modules.dashboard import Dashboard
-from modules.reporter import upload_report
+from modules.reporter import upload_report, DEFAULT_REPORT_URL
 
 
 def get_resource_path(relative: str = "") -> str:
@@ -137,8 +137,8 @@ Examples:
     # Report server
     parser.add_argument(
         "--report-server",
-        default=None,
-        help="Upload results to collection server (e.g. http://10.216.65.91:62997/report)",
+        default=DEFAULT_REPORT_URL,
+        help=f"Upload results to collection server (default: {DEFAULT_REPORT_URL})",
     )
 
     args = parser.parse_args()
