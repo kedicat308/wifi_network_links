@@ -108,7 +108,7 @@ python server.py --log /var/log/server_log.log
 | `--port` | `62997` | 监听端口 |
 | `--output` | `network_inspect.json` | 数据输出文件路径 |
 | `--log` | `server_log.log` | 日志文件路径 |
-| `--iperf-instances` | `0` | iperf3 进程池实例数 (0 = 不启用) |
+| `--iperf-instances` | `1` | iperf3 进程池实例数 (0 = 不启用) |
 | `--iperf-base-port` | `60998` | iperf3 起始端口 |
 | `--iperf-timeout` | `120` | 端口分配超时自动释放 (秒) |
 | `--iperf-path` | `iperf3` | iperf3 可执行文件路径 |

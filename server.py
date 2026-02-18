@@ -438,8 +438,8 @@ def parse_args():
 
     # iperf3 pool
     parser.add_argument(
-        "--iperf-instances", type=int, default=0,
-        help="Number of iperf3 server instances to manage (0 = disabled, default: 0)",
+        "--iperf-instances", type=int, default=1,
+        help="Number of iperf3 server instances to manage (0 = disabled, default: 1)",
     )
     parser.add_argument(
         "--iperf-base-port", type=int, default=60998,
