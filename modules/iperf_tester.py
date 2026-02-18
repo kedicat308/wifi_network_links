@@ -122,32 +122,37 @@ class IperfTester:
     def _allocate_port(self) -> bool:
         """Request an exclusive iperf3 port from the server pool.
 
-        Returns True if a port was allocated (or no alloc_url configured),
-        False if allocation failed (all busy / server unreachable).
+        If all ports are busy, polls every 5 seconds until one becomes
+        free or the stop event is set.  Returns True on success, False
+        only when the server is unreachable or the test is cancelled.
         """
         if not self._alloc_url:
             return True
         url = self._alloc_url.rstrip("/") + "/iperf-port"
-        for attempt in range(3):
+        net_failures = 0
+        while not self._stop_event.is_set():
             try:
                 req = urllib.request.Request(url)
                 with urllib.request.urlopen(req, timeout=5) as resp:
                     data = json.loads(resp.read().decode("utf-8"))
+                net_failures = 0  # reset on success
                 port = data.get("port")
                 if port:
                     self._allocated_port = port
                     self.port = port
                     self.stats.port = port
                     return True
-                self.stats.error = data.get("error", "no port in response")
-                return False
+                # All busy — wait and retry
+                self.stats.current_phase = "queued"
+                self._stop_event.wait(5)
+                continue
             except (urllib.error.URLError, OSError, json.JSONDecodeError,
                     ValueError) as e:
-                if attempt < 2:
-                    time.sleep(2)
-                else:
+                net_failures += 1
+                if net_failures >= 3:
                     self.stats.error = f"Failed to allocate iperf3 port: {e}"
                     return False
+                self._stop_event.wait(2)
         return False
 
     def _release_port(self):
