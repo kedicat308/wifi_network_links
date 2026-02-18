@@ -11,7 +11,7 @@ next to the .exe to customise default settings.
 """
 
 import os
-from PyInstaller.utils.hooks import collect_data_files
+from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
 project_root = os.path.dirname(os.path.abspath(SPEC))
@@ -24,15 +24,17 @@ for fname in ("iperf3.exe", "cygwin1.dll"):
         # (source, dest_folder_inside_bundle)
         binaries.append((fpath, "."))
 
-# rich uses data files (e.g. _unicode_data) that PyInstaller may not detect
-rich_datas = collect_data_files("rich")
+# rich dynamically imports _unicode_data modules (e.g. unicode17-0-0) via
+# importlib.import_module; collect_all ensures they are bundled as importable modules.
+rich_datas, rich_binaries, rich_hiddenimports = collect_all("rich")
+binaries += rich_binaries
 
 a = Analysis(
     ["main.py"],
     pathex=[project_root],
     binaries=binaries,
     datas=rich_datas,
-    hiddenimports=[],
+    hiddenimports=rich_hiddenimports,
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
