@@ -214,6 +214,9 @@ class Dashboard:
             else:
                 table.add_row("  Bandwidth", bandwidth_bar(dl.bandwidth_mbps))
                 table.add_row("  Transfer", f"{dl.transfer_mb:.1f} MB")
+                if dl.protocol == "TCP" and dl.retransmits > 0:
+                    retr_color = "yellow" if dl.retransmits < 50 else "red"
+                    table.add_row("  Retransmits", f"[{retr_color}]{dl.retransmits}[/]")
                 if dl.protocol == "UDP":
                     table.add_row("  Jitter", f"{dl.jitter_ms:.2f} ms")
                     table.add_row("  Loss", f"{dl.loss_pct:.1f}%")
@@ -233,6 +236,9 @@ class Dashboard:
             else:
                 table.add_row("  Bandwidth", bandwidth_bar(ul.bandwidth_mbps))
                 table.add_row("  Transfer", f"{ul.transfer_mb:.1f} MB")
+                if ul.protocol == "TCP" and ul.retransmits > 0:
+                    retr_color = "yellow" if ul.retransmits < 50 else "red"
+                    table.add_row("  Retransmits", f"[{retr_color}]{ul.retransmits}[/]")
                 if ul.protocol == "UDP":
                     table.add_row("  Jitter", f"{ul.jitter_ms:.2f} ms")
                     table.add_row("  Loss", f"{ul.loss_pct:.1f}%")

@@ -92,16 +92,20 @@ def _serialize_iperf(it) -> dict:
 def _serialize_iperf_result(r) -> dict:
     intervals = []
     for iv in r.intervals:
-        intervals.append({
+        iv_dict = {
             "interval": iv.interval,
             "transfer_bytes": iv.transfer_bytes,
             "bandwidth_mbps": round(iv.bandwidth_mbps, 2),
-        })
+        }
+        if iv.retransmits:
+            iv_dict["retransmits"] = iv.retransmits
+        intervals.append(iv_dict)
     result = {
         "direction": r.direction,
         "protocol": r.protocol,
         "bandwidth_mbps": round(r.bandwidth_mbps, 2),
         "transfer_mb": round(r.transfer_mb, 2),
+        "retransmits": r.retransmits,
         "done": r.done,
         "error": r.error,
         "intervals": intervals,

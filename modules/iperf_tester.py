@@ -16,6 +16,7 @@ class IperfStream:
     interval: str
     transfer_bytes: float
     bandwidth_mbps: float
+    retransmits: int = 0
     jitter_ms: float = 0.0
     lost_packets: int = 0
     total_packets: int = 0
@@ -28,6 +29,7 @@ class IperfResult:
     protocol: str  # "UDP" or "TCP"
     bandwidth_mbps: float = 0.0
     transfer_mb: float = 0.0
+    retransmits: int = 0
     jitter_ms: float = 0.0
     lost_packets: int = 0
     total_packets: int = 0
@@ -248,6 +250,7 @@ class IperfTester:
                 interval=f"{streams.get('start', 0):.1f}-{streams.get('end', 0):.1f}",
                 transfer_bytes=transfer,
                 bandwidth_mbps=bw_bps / 1_000_000,
+                retransmits=streams.get("retransmits", 0),
                 jitter_ms=streams.get("jitter_ms", 0),
                 lost_packets=streams.get("lost_packets", 0),
                 total_packets=streams.get("packets", 0),
@@ -265,6 +268,10 @@ class IperfTester:
 
         result.bandwidth_mbps = summary.get("bits_per_second", 0) / 1_000_000
         result.transfer_mb = summary.get("bytes", 0) / (1024 * 1024)
+
+        # TCP retransmits (from sum_sent)
+        sum_sent = end.get("sum_sent", {})
+        result.retransmits = sum_sent.get("retransmits", 0)
 
         # UDP-specific stats
         udp_summary = end.get("sum", {})
