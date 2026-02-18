@@ -95,7 +95,19 @@ python server.py
 
 # 自定义地址/端口
 python server.py --host 0.0.0.0 --port 9999
+
+# 自定义日志文件路径
+python server.py --log /var/log/server_log.log
 ```
+
+服务端参数：
+
+| 参数 | 默认值 | 说明 |
+|---|---|---|
+| `--host` | `10.216.65.91` | 监听地址 |
+| `--port` | `62997` | 监听端口 |
+| `--output` | `network_inspect.json` | 数据输出文件路径 |
+| `--log` | `server_log.log` | 日志文件路径 |
 
 服务端接口：
 
@@ -131,6 +143,29 @@ python main.py --report-server http://10.216.65.91:62997/report
 }
 ```
 
+### 服务端日志
+
+服务端将所有客户端的连接请求及处理结果写入 `server_log.log` 文件（同时输出到控制台），便于事后排查问题。
+
+每条日志包含：**时间 | 级别 | 事件类型 | 客户端 IP:端口 | 请求方法路径 | 结果**
+
+```
+2026-02-17 14:30:52  INFO   Server started on 10.216.65.91:62997
+2026-02-17 14:31:05  INFO   CONNECT  192.168.1.50:54321  POST /report
+2026-02-17 14:31:05  INFO   SUCCESS  192.168.1.50:54321  POST /report  stored -> PC-01:20260217_143105
+2026-02-17 14:31:08  INFO   CONNECT  192.168.1.60:54322  POST /report
+2026-02-17 14:31:08  WARNING  FAIL  192.168.1.60:54322  POST /report  400 Invalid JSON: ...
+2026-02-17 15:00:00  INFO   Server shutting down (Ctrl+C)
+```
+
+事件类型说明：
+
+| 事件 | 级别 | 说明 |
+|---|---|---|
+| `CONNECT` | INFO | 收到客户端连接请求 |
+| `SUCCESS` | INFO | 请求处理成功 |
+| `FAIL` | WARNING | 请求处理失败 (含 HTTP 状态码和原因) |
+
 ### 并发安全
 
 - 服务端使用 `threading.Lock` 保护文件读写，多客户端同时上报不会丢数据
@@ -143,7 +178,7 @@ python main.py --report-server http://10.216.65.91:62997/report
 wifi_network_links/
 ├── main.py                      # 入口 (iperf3 版本)
 ├── main_iperf2.py               # 入口 (iperf2 版本)
-├── server.py                    # 数据收集服务端
+├── server.py                    # 数据收集服务端 (日志写入 server_log.log)
 ├── requirements.txt             # 依赖: rich>=13.0.0
 ├── wifi_diag.spec               # PyInstaller 打包 (iperf3)
 ├── wifi_diag_iperf2.spec        # PyInstaller 打包 (iperf2)
